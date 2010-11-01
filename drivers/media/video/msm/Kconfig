@@ -2,14 +2,14 @@ comment "Camera Sensor Selection"
 config MT9T013
 	bool "Sensor mt9t013 (BAYER 3M)"
 	depends on MSM_CAMERA
-	default y
+	default n
 	---help---
 	  MICRON 3M Bayer Sensor with AutoFocus
 
 config MT9D112
 	bool "Sensor mt9d112 (YUV 2M)"
 	depends on MSM_CAMERA
-	default y
+	default n
 	---help---
 	  MICRON 2M YUV Sensor
 config VX6953
@@ -22,10 +22,34 @@ config VX6953
 config MT9P012
 	bool "Sensor mt9p012 (BAYER 5M)"
 	depends on MSM_CAMERA
-	default y
+	default n
 	---help---
 	  MICRON 5M Bayer Sensor with Autofocus
-
+	  
+config MT9V113
+	bool "Sensor mt9v113 (YUV 0.3M)"
+	depends on MSM_CAMERA
+	default n
+	---help---
+	  APTINA 0.3M YUV Sensor
+ 
+config MT9T11X
+	bool "Sensor mt9t111 or mt9t112 (YUV 3.1M)"
+	depends on MSM_CAMERA
+	default y
+	---help---
+	  APTINA 3.1M YUV Sensor
+	  
+if MT9T11X
+config MT9T11X_QTECH_MCNEX_FPC
+	bool "Sensor mt9t111 or mt9t112 (YUV 3.1M)"
+	depends on MSM_CAMERA
+	depends on MACH_BLADE || MACH_SMOOTH || MACH_RAISE
+	default y
+	---help---
+	  APTINA 3.1M YUV Sensor
+endif # MT9T11X
+	  
 choice
 	prompt "AF module"
 	depends on MT9P012
@@ -46,14 +70,14 @@ endchoice
 config MT9P012_KM
 	bool "Sensor mt9p012 KM module (BAYER 5M)"
 	depends on MSM_CAMERA
-	default y
+	default n
 	---help---
 	  MICRON 5M Bayer Sensor KM modules with Autofocus
 
 config S5K3E2FX
 	bool "Sensor s5k3e2fx (Samsung 5M)"
 	depends on MSM_CAMERA
-	default y
+	default n
 	---help---
 	  Samsung 5M with Autofocus
 
@@ -62,11 +86,11 @@ config VB6801
 	depends on MSM_CAMERA
 	---help---
 	  5M with flash
-
+	  
 config MSM_CAMERA_FLASH
 	bool "Qualcomm MSM camera flash support"
 	depends on MSM_CAMERA
-	default y
+	default n
 	---help---
 	  Enable support for LED flash for msm camera
 

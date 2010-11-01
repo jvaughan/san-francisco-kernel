@@ -14,6 +14,9 @@
  * Author: San Mehat (san@android.com)
  *
  */
+//ruanmeisi 20100408   ruanmeisi_20100408 p729b sd suport host plug don't shutdown polling
+//ruanmeisi 20100408   ruanmeisi_20100418 add CONFIG_MACH_BLADE macro
+//ruanmeisi 20100510   ruanmeisi_20100510 clean host->pio  when stop data
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -46,15 +49,39 @@
 #include <mach/clk.h>
 #include <mach/dma.h>
 #include <mach/htc_pwrsink.h>
+//ruanmeisi
+#include <linux/proc_fs.h>
 
+#define ATH_PATCH
 
 #include "msm_sdcc.h"
 
 #define DRIVER_NAME "msm-sdcc"
 
-#define DBG(host, fmt, args...)	\
-	pr_debug("%s: %s: " fmt "\n", mmc_hostname(host->mmc), __func__ , args)
+//ruanmeisi   20100221
 
+#define T_CARD_DRIVER_ID                1
+
+
+/* #define DBG(host, fmt, args...)	\ */
+/* 	pr_debug("%s: %s: " fmt "\n", mmc_hostname(host->mmc), __func__ , args) */
+
+#define DPRINTK(fmt, args...)						\
+	printk(KERN_ERR "mmc:%s: %d: " fmt "",                     \
+	       __FUNCTION__, __LINE__,  ## args)
+
+#define DBG(host, fmt, args...)	\
+	do {								\
+	if(mmc_debug)							\
+		printk(KERN_ERR"%s: %s: " fmt "\n", mmc_hostname(host->mmc), __func__ , args) ;	\
+			}while(0)					\
+
+
+static struct proc_dir_entry * d_entry;
+int mmc_debug = 0;
+
+int queue_redetect_work(struct work_struct *work);
+void mmc_redetect_card(struct mmc_host *host);
 #define IRQ_DEBUG 0
 
 #if defined(CONFIG_DEBUG_FS)
@@ -199,6 +226,12 @@ msmsdcc_request_end(struct msmsdcc_host *host, struct mmc_request *mrq)
 static void
 msmsdcc_stop_data(struct msmsdcc_host *host)
 {
+
+	//ruanmeisi_20100510
+	if (T_CARD_DRIVER_ID == host->pdev_id) {
+		memset(&host->pio, 0, sizeof(host->pio));
+	}
+	//end
 	host->curr.data = NULL;
 	host->curr.got_dataend = host->curr.got_datablkend = 0;
 }
@@ -693,7 +726,59 @@ msmsdcc_pio_irq(int irq, void *dev_id)
 
 		if (!(status & (MCI_TXFIFOHALFEMPTY | MCI_RXDATAAVLBL)))
 			break;
+		//ruanmeisi_20100510
+		if(NULL == host->curr.mrq) {
+			pr_info("[rms:sd]:%s pio host->curr.mrq is null\n", 
+				mmc_hostname(host->mmc));
 
+			if(status & MCI_RXACTIVE) {
+				int read_cnt = 0;
+				while(readl(base+MMCISTATUS) & MCI_RXDATAAVLBL) {
+					readl(base+MMCIFIFO+(1%MCI_FIFOSIZE));
+					if((read_cnt++) > MCI_FIFOSIZE)
+						break;
+				}
+				writel(0, base + MMCIMASK1);
+			}
+
+			if(status & MCI_TXACTIVE) {
+				writel(0, base + MMCIMASK1);
+			}
+
+			return IRQ_HANDLED;
+		}
+		//ZTE_WIFI_HP_019 
+		//hp merge htc patch for pio.sg NULL 
+		//here we catch the pio.sg==NULL, and stop current transaction, 
+		//let app to handle the error
+		if(host->pio.sg == NULL) {
+			pr_info("[hp@wifi]:%s pio scatter list is null\n", 
+					mmc_hostname(host->mmc));
+
+			if(status & MCI_RXACTIVE) {
+				int read_cnt = 0;
+				while(readl(base+MMCISTATUS) & MCI_RXDATAAVLBL) {
+					readl(base+MMCIFIFO+(1%MCI_FIFOSIZE));
+					if((read_cnt++) > MCI_FIFOSIZE)
+						break;
+				}
+				writel(MCI_RXDATAAVLBLMASK, base + MMCIMASK1);
+			}
+
+			if(status & MCI_TXACTIVE) {
+				struct mmc_request *mrq;
+
+				writel(0, base + MMCIMASK1);
+				mrq = host->curr.mrq;
+				mrq->data->error = 1;
+				if(mrq->done)
+					mrq->done(mrq);
+			}
+
+			return IRQ_HANDLED;
+
+		}
+		//ZTE_WIFI_HP_019 end 
 		/* Map the current scatter buffer */
 		local_irq_save(flags);
 		buffer = kmap_atomic(sg_page(host->pio.sg),
@@ -812,7 +897,9 @@ msmsdcc_irq(int irq, void *dev_id)
 			cmd->resp[1] = readl(base + MMCIRESPONSE1);
 			cmd->resp[2] = readl(base + MMCIRESPONSE2);
 			cmd->resp[3] = readl(base + MMCIRESPONSE3);
-
+			//ruanmeisi_20100510
+			del_timer(&host->command_timer);
+			//end
 			if (status & MCI_CMDTIMEOUT) {
 #if VERBOSE_COMMAND_TIMEOUTS
 				pr_err("%s: Command timeout\n",
@@ -996,6 +1083,9 @@ msmsdcc_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	}
 
 	msmsdcc_request_start(host, mrq);
+	//ruanmeisi_20100510
+	mod_timer(&host->command_timer, jiffies + HZ);
+	//end
 	spin_unlock_irqrestore(&host->lock, flags);
 }
 
@@ -1167,6 +1257,46 @@ msmsdcc_status_notify_cb(int card_present, void *dev_id)
 	msmsdcc_check_status((unsigned long) host);
 }
 
+
+/* ruanmeisi_20100510 command timeout handle */
+/*
+ * called when a command expires.
+ * Dump some debugging, and then error
+ * out the transaction.
+ */
+static void
+msmsdcc_command_expired(unsigned long _data)
+{
+	struct msmsdcc_host	*host = (struct msmsdcc_host *) _data;
+	struct mmc_request	*mrq;
+	unsigned long		flags;
+
+	spin_lock_irqsave(&host->lock, flags);
+	mrq = host->curr.mrq;
+
+	if (!mrq) {
+		printk(KERN_INFO "%s: Command expiry misfire\n",
+		       mmc_hostname(host->mmc));
+		spin_unlock_irqrestore(&host->lock, flags);
+		return;
+	}
+
+	printk(KERN_ERR "%s: Command timeout [%u] (%p %p %p %p)\n",
+	       mmc_hostname(host->mmc), mrq->cmd->opcode, mrq, mrq->cmd,
+	       mrq->data, host->dma.sg);
+
+	mrq->cmd->error = -ETIMEDOUT;
+	msmsdcc_stop_data(host);
+
+	writel(0, host->base + MMCICOMMAND);
+
+	host->curr.mrq = NULL;
+	host->curr.cmd = NULL;
+
+	spin_unlock_irqrestore(&host->lock, flags);
+	mmc_request_done(host->mmc, mrq);
+}
+/*ruanmeisi_20100510 end */
 static int
 msmsdcc_init_dma(struct msmsdcc_host *host)
 {
@@ -1250,10 +1380,110 @@ set_polling(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
+/* ATHENV +++ */
+static ssize_t
+set_detect_change(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct mmc_host *mmc = dev_get_drvdata(dev);
+	struct msmsdcc_host *host = mmc_priv(mmc);
+	int value;
+	if (sscanf(buf, "%d", &value)==1 && value) {
+        mmc_detect_change(host->mmc, 0);
+    }
+	return count;
+}
+static DEVICE_ATTR(detect_change, S_IRUGO | S_IWUSR,
+		NULL, set_detect_change);
+/* ATHENV --- */
+
+//ruanmeisi_20091224 sysfs interface for debug
+
+void msmsdcc_mmc_redetect(struct work_struct *work)
+{
+	struct msmsdcc_host *msmsdcchost =
+		container_of(work, struct msmsdcc_host, redetect);
+	struct mmc_host *host = msmsdcchost->mmc; 
+#ifdef CONFIG_HAS_EARLYSUSPEND
+	if (msmsdcchost->polling_enabled) {
+		unsigned long flags;
+		spin_lock_irqsave(&host->lock, flags);
+		msmsdcchost->mmc->caps |= MMC_CAP_NEEDS_POLL;
+		spin_unlock_irqrestore(&host->lock, flags);
+	}
+#endif
+	mmc_redetect_card(host);
+	return ;
+}
+
+static ssize_t
+show_highspeed(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct mmc_host *mmc = dev_get_drvdata(dev);
+	struct msmsdcc_host *host = mmc_priv(mmc);
+	int poll;
+	unsigned long flags;
+
+	spin_lock_irqsave(&host->lock, flags);
+	poll = !!(mmc->caps & MMC_CAP_SD_HIGHSPEED);
+	spin_unlock_irqrestore(&host->lock, flags);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", poll);
+}
+
+static ssize_t
+set_highspeed(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct mmc_host *mmc = dev_get_drvdata(dev);
+	struct msmsdcc_host *host = mmc_priv(mmc);
+	int value;
+	unsigned long flags;
+
+	sscanf(buf, "%d", &value);
+
+	spin_lock_irqsave(&host->lock, flags);
+	if (value) {
+		mmc->caps |= MMC_CAP_SD_HIGHSPEED;
+		mmc_detect_change(host->mmc, 0);
+	} else {
+		mmc->caps &= ~MMC_CAP_SD_HIGHSPEED;
+	}
+	spin_unlock_irqrestore(&host->lock, flags);
+	return count;
+}
+
+
+static ssize_t
+set_redetect(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct mmc_host *mmc = dev_get_drvdata(dev);
+	struct msmsdcc_host *host = mmc_priv(mmc);
+	queue_redetect_work(&(host->redetect));
+	return count;
+}
+
+
+static DEVICE_ATTR(redetect, S_IRUGO | S_IWUSR,
+		NULL, set_redetect);
+static DEVICE_ATTR(highspeed, S_IRUGO | S_IWUSR,
+		show_highspeed, set_highspeed);
+
+
+//end
+
 static DEVICE_ATTR(polling, S_IRUGO | S_IWUSR,
 		show_polling, set_polling);
 static struct attribute *dev_attrs[] = {
 	&dev_attr_polling.attr,
+/* ATHENV +++ */
+        &dev_attr_detect_change.attr,
+/* ATHENV --- */
+        //ruanmeisi_20091224 debug interface 
+	&dev_attr_redetect.attr,
+	&dev_attr_highspeed.attr,
+	//end
 	NULL,
 };
 static struct attribute_group dev_attr_grp = {
@@ -1266,7 +1496,13 @@ static void msmsdcc_early_suspend(struct early_suspend *h)
 	struct msmsdcc_host *host =
 		container_of(h, struct msmsdcc_host, early_suspend);
 	unsigned long flags;
-
+#ifdef CONFIG_MACH_BLADE
+	//ruanmeisi_20100408 p729b sd suport host plug
+	//don't shutdown polling
+	if (T_CARD_DRIVER_ID == host->pdev_id) {
+		return ;
+	}
+#endif
 	spin_lock_irqsave(&host->lock, flags);
 	host->polling_enabled = host->mmc->caps & MMC_CAP_NEEDS_POLL;
 	host->mmc->caps &= ~MMC_CAP_NEEDS_POLL;
@@ -1277,7 +1513,13 @@ static void msmsdcc_late_resume(struct early_suspend *h)
 	struct msmsdcc_host *host =
 		container_of(h, struct msmsdcc_host, early_suspend);
 	unsigned long flags;
-
+#ifdef CONFIG_MACH_BLADE
+	//ruanmeisi_20100408 p729b sd suport host plug
+	//don't shutdown polling
+	if (T_CARD_DRIVER_ID == host->pdev_id) {
+		return ;
+	}
+#endif
 	if (host->polling_enabled) {
 		spin_lock_irqsave(&host->lock, flags);
 		host->mmc->caps |= MMC_CAP_NEEDS_POLL;
@@ -1427,7 +1669,11 @@ msmsdcc_probe(struct platform_device *pdev)
 #ifdef CONFIG_MMC_MSM_SDIO_SUPPORT
 	mmc->caps |= MMC_CAP_SDIO_IRQ;
 #endif
-
+	//ruanmeisi 20100221 
+	if (T_CARD_DRIVER_ID == host->pdev_id) {
+		mmc->caps |= MMC_CAP_NEEDS_POLL;
+	}
+	//end
 	mmc->max_phys_segs = NR_SG;
 	mmc->max_hw_segs = NR_SG;
 	mmc->max_blk_size = 4096;	/* MCI_DATA_CTL BLOCKSIZE up to 4096 */
@@ -1484,7 +1730,16 @@ msmsdcc_probe(struct platform_device *pdev)
 			disable_irq(host->plat->sdiowakeup_irq);
 		}
 	}
+//ruanmeisi_20100510
 
+/*
+	 * Setup a command timer. We currently need this due to
+	 * some 'strange' timeout / error handling situations.
+	 */
+	init_timer(&host->command_timer);
+	host->command_timer.data = (unsigned long) host;
+	host->command_timer.function = msmsdcc_command_expired;
+//end
 	ret = request_irq(irqres->start, msmsdcc_irq, IRQF_SHARED,
 			  DRIVER_NAME " (cmd)", host);
 	if (ret)
@@ -1522,6 +1777,8 @@ msmsdcc_probe(struct platform_device *pdev)
 	       host->eject);
 	pr_info("%s: Power save feature enable = %d\n",
 	       mmc_hostname(mmc), msmsdcc_pwrsave);
+	pr_info("%s: Dummy52 feature enable = %d\n",
+	       mmc_hostname(mmc), plat->dummy52_required);
 
 	if (host->dma.channel != -1) {
 		pr_info("%s: DM non-cached buffer at %p, dma_addr 0x%.8x\n",
@@ -1540,6 +1797,8 @@ msmsdcc_probe(struct platform_device *pdev)
 		if (ret)
 			goto irq_free;
 	}
+//ruanmeisi
+	INIT_WORK(&host->redetect, msmsdcc_mmc_redetect);
 	return 0;
  irq_free:
 	free_irq(irqres->start, host);
@@ -1584,6 +1843,9 @@ static int msmsdcc_remove(struct platform_device *pdev)
 	DBG(host, "Removing SDCC2 device = %d\n", pdev->id);
 	plat = host->plat;
 
+	//ruanmeisi_20100510
+	del_timer_sync(&host->command_timer);
+	//end
 	if (!plat->status_irq)
 		sysfs_remove_group(&pdev->dev.kobj, &dev_attr_grp);
 
@@ -1623,6 +1885,46 @@ static int msmsdcc_remove(struct platform_device *pdev)
 }
 
 #ifdef CONFIG_PM
+/* ATHENV */
+struct msmsdcc_host *wlan_host;
+void plat_disable_wlan_slot(void)
+{
+	struct msmsdcc_host *host = wlan_host;
+
+	if (host->plat->status_irq)
+		disable_irq(host->plat->status_irq);
+	writel(0, host->base + MMCIMASK0);
+	if (host->clks_on) {
+		clk_disable(host->clk);
+		clk_disable(host->pclk);
+		host->clks_on = 0;
+	}
+	if (host->plat->sdiowakeup_irq)
+		enable_irq(host->plat->sdiowakeup_irq);
+}
+EXPORT_SYMBOL(plat_disable_wlan_slot);
+
+void plat_enable_wlan_slot(void)
+{
+	struct msmsdcc_host *host = wlan_host;
+	unsigned long flags;
+
+	spin_lock_irqsave(&host->lock, flags);
+	if (!host->clks_on) {
+		clk_enable(host->pclk);
+		clk_enable(host->clk);
+		host->clks_on = 1;
+	}
+	writel(host->mci_irqenable, host->base + MMCIMASK0);
+	spin_unlock_irqrestore(&host->lock, flags);
+	if (host->plat->sdiowakeup_irq)
+		disable_irq(host->plat->sdiowakeup_irq);
+	if (host->plat->status_irq)
+		enable_irq(host->plat->status_irq);
+
+}
+EXPORT_SYMBOL(plat_enable_wlan_slot);
+/* ATHENV */
 static int
 msmsdcc_suspend(struct platform_device *dev, pm_message_t state)
 {
@@ -1634,12 +1936,21 @@ msmsdcc_suspend(struct platform_device *dev, pm_message_t state)
 	if (test_and_set_bit(0, &host->suspended))
 		return 0;
 #endif
+	pr_info("%s pdev_id = %d\n",  __FUNCTION__, host->pdev_id);
+
 	if (mmc) {
 		if (host->plat->status_irq)
 			disable_irq(host->plat->status_irq);
-
+#ifdef ATH_PATCH /* ATHENV+++ */
+		rc = mmc_suspend_host(mmc, state);
+		if (rc!=0) {
+			if (host->plat->status_irq)
+				enable_irq(host->plat->status_irq);
+		}
+#else
 		if (!mmc->card || mmc->card->type != MMC_TYPE_SDIO)
 			rc = mmc_suspend_host(mmc, state);
+#endif /* ATHENV--- */
 		if (!rc) {
 			writel(0, host->base + MMCIMASK0);
 
@@ -1649,9 +1960,19 @@ msmsdcc_suspend(struct platform_device *dev, pm_message_t state)
 				host->clks_on = 0;
 			}
 		}
-
+#ifdef ATH_PATCH /* ATHENV+++ */
+		if (mmc->last_suspend_error) {
+			/* 
+			 * save host for WoW mode 
+			 * Don't enable sdio wakeup irq before system suspend
+			*/
+			wlan_host = host;
+			return 0;
+		}
+#else
 		if (host->plat->sdiowakeup_irq)
 			enable_irq(host->plat->sdiowakeup_irq);
+#endif /* ATHENV--- */
 	}
 	return rc;
 }
@@ -1667,7 +1988,16 @@ msmsdcc_resume(struct platform_device *dev)
 	if (!test_and_clear_bit(0, &host->suspended))
 		return 0;
 #endif
+	pr_info("%s pdev_id = %d\n",  __FUNCTION__, host->pdev_id);
+
 	if (mmc) {
+/* ATHENV+++ */
+		if (mmc->last_suspend_error) {
+			wlan_host = host;
+			mmc->last_suspend_error = 0;
+			return 0;
+		}
+/* ATHENV--- */
 		spin_lock_irqsave(&host->lock, flags);
 		if (!host->clks_on) {
 			clk_enable(host->pclk);
@@ -1678,11 +2008,14 @@ msmsdcc_resume(struct platform_device *dev)
 		writel(host->mci_irqenable, host->base + MMCIMASK0);
 
 		spin_unlock_irqrestore(&host->lock, flags);
-
+#ifdef ATH_PATCH /* ATHENV+++ */
+		if (1) {
+#else
 		if (host->plat->sdiowakeup_irq)
 			disable_irq(host->plat->sdiowakeup_irq);
 
 		if (!mmc->card || mmc->card->type != MMC_TYPE_SDIO) {
+#endif /* ATHENV--- */
 #ifdef CONFIG_MMC_MSM7X00A_RESUME_IN_WQ
 			schedule_work(&host->resume_task);
 #else
@@ -1726,6 +2059,60 @@ static struct platform_driver msmsdcc_driver = {
 	},
 };
 
+//ruanmeisi_091224 proc interface
+static int msm_sdcc_read_proc(
+        char *page, char **start, off_t off, int count, int *eof, void *data)
+{
+	int len = 0;
+	len = sprintf(page, "%s\n",
+                      !!mmc_debug == 1?"on":"off");
+	return len;
+
+}
+
+static int msm_sdcc_write_proc(struct file *file, const char __user *buffer,
+			     unsigned long count, void *data)
+{
+	char tmp[16] = {0};
+	int len = 0;
+	len = count;
+	if (count > sizeof(tmp)) {
+		len = sizeof(tmp) - 1;
+	}
+	if(copy_from_user(tmp, buffer, len))
+                return -EFAULT;
+	if (strstr(tmp, "on")) {
+		mmc_debug = 1;
+	} else if (strstr(tmp, "off")) {
+		mmc_debug = 0;
+	}
+	return count;
+
+}
+
+
+void
+init_mmc_proc(void)
+{
+	d_entry = create_proc_entry("msm_sdcc",
+				    0, NULL);
+        if (d_entry) {
+                d_entry->read_proc = msm_sdcc_read_proc;
+                d_entry->write_proc = msm_sdcc_write_proc;
+                d_entry->data = NULL;
+        }
+
+}
+
+void
+deinit_mmc_proc(void)
+{
+	if (NULL != d_entry) {
+		remove_proc_entry("msm_sdcc", NULL);
+		d_entry = NULL;
+	}
+}
+//end
 static int __init msmsdcc_init(void)
 {
 #if defined(CONFIG_DEBUG_FS)
@@ -1736,11 +2123,17 @@ static int __init msmsdcc_init(void)
 		return ret;
 	}
 #endif
+	//ruanmeisi_091224 proc interface
+	init_mmc_proc();
+	//end
 	return platform_driver_register(&msmsdcc_driver);
 }
 
 static void __exit msmsdcc_exit(void)
 {
+	//ruanmeisi_091224 proc interface
+	deinit_mmc_proc();
+	//end
 	platform_driver_unregister(&msmsdcc_driver);
 
 #if defined(CONFIG_DEBUG_FS)

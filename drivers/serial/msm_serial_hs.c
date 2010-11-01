@@ -26,6 +26,7 @@
  * useful for peripherals that send unsolicited RX such as Bluetooth.
  */
 
+
 #include <linux/module.h>
 
 #include <linux/serial.h>
@@ -528,6 +529,42 @@ unsigned int msm_hs_tx_empty(struct uart_port *uport)
 	return ret;
 }
 EXPORT_SYMBOL(msm_hs_tx_empty);
+
+#ifdef CONFIG_MODEMCTL
+
+
+unsigned int msm_hs_dm1_tx_empty(void)
+{
+	unsigned int data;
+	unsigned int ret = 0;
+
+
+	struct msm_hs_port *msm_uport = NULL;
+
+      printk(KERN_WARNING "@@@@ msm_hs_dm1_tx_empty++ \n");
+      
+	msm_uport = &q_uart_port[1];
+      if(!msm_uport) 
+      {
+          printk(KERN_WARNING "@@ Error get the device /dev/ttyHS1--q_uart_port[1], maybe not init \n");
+	    return MODEMCTL_UARTDM1_UNINIT;
+      }
+      
+	clk_enable(msm_uport->clk);
+    
+	data = msm_hs_read(&(msm_uport->uport), UARTDM_SR_ADDR);
+	if (data & UARTDM_SR_TXEMT_BMSK)
+		ret = TIOCSER_TEMT;
+
+	clk_disable(msm_uport->clk);
+    
+      printk(KERN_WARNING "@@@@ msm_hs_dm1_tx_empty-- the ret  = %d\n", ret);  
+
+	return ret;
+}
+EXPORT_SYMBOL(msm_hs_dm1_tx_empty);
+
+#endif
 
 /*
  *  Standard API, Stop transmitter.

@@ -35,9 +35,7 @@ static inline bool match_tcp(const struct sk_buff *skb,
 	struct tcphdr _tcph;
 	const struct tcphdr *th;
 
-	/* In practice, TCP match does this, so can't fail.  But let's
-	 * be good citizens.
-	 */
+
 	th = skb_header_pointer(skb, ip_hdrlen(skb), sizeof(_tcph), &_tcph);
 	if (th == NULL) {
 		*hotdrop = false;

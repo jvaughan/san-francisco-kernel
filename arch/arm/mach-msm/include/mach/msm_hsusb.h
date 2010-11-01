@@ -52,6 +52,7 @@ struct usb_function_map {
 #ifndef CONFIG_USB_ANDROID
 /* platform device data for msm_hsusb driver */
 struct usb_composition {
+       __u16   vendor_id;
 	__u16   product_id;
 	unsigned long functions;
 };
@@ -97,6 +98,7 @@ struct msm_hsusb_platform_data {
 	int vreg5v_required;
 
 	u32 swfi_latency;
+	int zte_pid;//hemulu
 };
 
 struct msm_otg_platform_data {

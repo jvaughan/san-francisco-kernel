@@ -17,6 +17,7 @@
  *
  */
 
+
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/io.h>
@@ -46,9 +47,13 @@ static void msm_map_io(struct map_desc *io_desc, int size)
 	int i;
 
 	BUG_ON(!size);
-	for (i = 0; i < size; i++)
+
+	for (i = 0; i < size; i++) {
 		if (io_desc[i].virtual == (unsigned long)MSM_SHARED_RAM_BASE)
 			io_desc[i].pfn = __phys_to_pfn(msm_shared_ram_phys);
+
+	}	
+
 
 	iotable_init(io_desc, size);
 }
@@ -81,6 +86,20 @@ static struct map_desc msm_io_desc[] __initdata = {
 		.length =   MSM_SHARED_RAM_SIZE,
 		.type =     MT_DEVICE,
 	},
+
+#if 0	
+	{
+		.virtual =  (unsigned long) MSM_TRACE_LOG_BASE,
+		.length =   MSM_TRACE_LOG_SIZE,
+		.type =     MT_DEVICE,
+	},
+
+	{
+		.virtual =  (unsigned long) MSM_F3_LOG_BASE,
+		.length =   MSM_F3_LOG_SIZE,
+		.type =     MT_DEVICE,
+	},
+#endif	
 };
 
 void __init msm_map_common_io(void)

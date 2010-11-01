@@ -7,6 +7,7 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
+
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
 #include <linux/i2c-gpio.h>
@@ -128,8 +129,10 @@ static int __devinit i2c_gpio_probe(struct platform_device *pdev)
 	else if (pdata->scl_is_output_only)
 		bit_data->udelay = 50;			/* 10 kHz */
 	else
+	#if 0
 		bit_data->udelay = 5;			/* 100 kHz */
-
+	#endif
+		bit_data->udelay = 2;			/* 400 kHz */
 	if (pdata->timeout)
 		bit_data->timeout = pdata->timeout;
 	else

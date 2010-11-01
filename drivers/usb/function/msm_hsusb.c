@@ -16,6 +16,20 @@
  * GNU General Public License for more details.
  *
  */
+ /*
+ ========================================================================================
+when        who           what, where, why                                comment tag
+----------  ----------  ----------------------------------------------  -----------------
+2010-0528   rms       ruanmeisi_20100528 if serial_number is not default,bind in kernel
+2010-04-20  HML       config default pid & serialnumber in early-init            HML_USB_20100513
+2010-05-06  wzy       add pid 1354 1355                                    ZTE_USB_006
+2010-04-20  HML       add bind select                                               HML_USB_005
+2010-03-31  HML      delay enum,restore usb mode as composition      HML_USB_004
+                               switch  and modify some hsusb functions attr
+2010-01-21  HML      Extend rpc for read/write,and store                    HML_USB_003
+                               config info in nv.  
+2010-02-11  HML      eclair 5210 usb function modify                         USB-HML-001 
+*/
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -73,8 +87,34 @@
 #define is_phy_45nm()     (PHY_MODEL(ui->phy_info) == USB_PHY_MODEL_45NM)
 #define is_phy_external() (PHY_TYPE(ui->phy_info) == USB_PHY_EXTERNAL)
 
-static int pid = 0x9018;
+static int pid = 0x01351;
+//HML_USB_005 add usb bind mode
+enum usb_bind_mode {	
+       BIND_IN_KERNEL=0,
+	BIND_IN_USER,
+} ;
+static enum usb_bind_mode g_bind_mode=BIND_IN_KERNEL; //hml
+int g_debug_enabled=0; //hml
+static int use_default_pid=0;
+static enum usb_bind_mode get_bind_mode(void)
+{
+	return g_bind_mode;
+}
 
+static void set_bind_mode(enum usb_bind_mode mode)
+{
+	g_bind_mode = mode;
+}
+// HML_USB_20100513- debug interface
+int get_debug_enabled(void)
+{
+	return g_debug_enabled;
+}
+EXPORT_SYMBOL(get_debug_enabled);
+void set_debug_enabled(int enabled)
+{
+	g_debug_enabled = enabled;
+}
 struct usb_fi_ept {
 	struct usb_endpoint *ept;
 	struct usb_endpoint_descriptor desc;
@@ -122,8 +162,9 @@ static void usb_enable_pullup(struct usb_info *ui);
 static void usb_disable_pullup(struct usb_info *ui);
 
 static struct workqueue_struct *usb_work;
+#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-001 
 static void usb_chg_stop(struct work_struct *w);
-
+#endif
 #define USB_STATE_IDLE    0
 #define USB_STATE_ONLINE  1
 #define USB_STATE_OFFLINE 2
@@ -151,6 +192,32 @@ enum charger_type {
 	USB_CHG_TYPE__INVALID
 };
 
+//USB-HML-003 start,  add enum type for nv read/write
+enum usb_opt_nv_item  
+{
+    NV_BACK_LIGHT_I=77,//nv77 used for config/store usb mode 
+    NV_FTM_MODE_I = 453// FTM mode   
+};
+enum usb_opt_nv_type
+{
+    NV_READ=0,
+    NV_WRITE
+};
+/*  usb mode enum
+*/
+enum usb_conf_mode 
+{
+    HSU_CFG_ALL_INTERFACE=0,
+    HSU_CFG_ADB_MS,
+    HSU_CFG_ADB,
+    HSU_CFG_MS,
+    HSU_CFG_DIAG,
+    HSU_CFG_DIAG_NMEA_MODEM	   
+};
+#define NV_WRITE_SUCCESS 10  //used for rpc call write nv function 
+// HML_USB_20100513:take care of the order,the 4th must to be 0x0112 used for test software.
+static int zte_usb_pid[]={0x1350,0x1351,0x1352,0x1353,0x0112,0x0111,0x1354,0x1355};//usb zte pid list
+//USB-HML-003 end
 struct usb_info {
 	/* lock for register/queue/device state changes */
 	spinlock_t lock;
@@ -285,6 +352,7 @@ static ssize_t print_switch_state(struct switch_dev *sdev, char *buf)
 	return sprintf(buf, "%s\n", (ui->online ? "online" : "offline"));
 }
 
+#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-001 
 #define USB_WALLCHARGER_CHG_CURRENT 1800
 static int usb_get_max_power(struct usb_info *ui)
 {
@@ -368,6 +436,7 @@ chg_legacy_det_out:
 	} else
 		pr_info("\n%s: Standard Downstream Port\n", __func__);
 }
+#endif
 
 int usb_msm_get_next_strdesc_id(char *str)
 {
@@ -1589,8 +1658,9 @@ static irqreturn_t usb_interrupt(int irq, void *data)
 		pr_info("hsusb reset interrupt\n");
 		ui->usb_state = USB_STATE_DEFAULT;
 		ui->configured = 0;
+		#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-001
 		schedule_work(&ui->chg_stop);
-
+#endif
 		writel(readl(USB_ENDPTSETUPSTAT), USB_ENDPTSETUPSTAT);
 		writel(readl(USB_ENDPTCOMPLETE), USB_ENDPTCOMPLETE);
 		writel(0xffffffff, USB_ENDPTFLUSH);
@@ -1612,9 +1682,10 @@ static irqreturn_t usb_interrupt(int irq, void *data)
 	if (n & STS_SLI) {
 		pr_info("hsusb suspend interrupt\n");
 		ui->usb_state = USB_STATE_SUSPENDED;
-
+#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-001
 		/* stop usb charging */
 		schedule_work(&ui->chg_stop);
+#endif
 	}
 
 	if (n & STS_UI) {
@@ -1691,10 +1762,13 @@ static void usb_prepare(struct usb_info *ui)
 	ui->setup_req = usb_ept_alloc_req(&ui->ep0in, SETUP_BUF_SIZE);
 	ui->ep0out_req = usb_ept_alloc_req(&ui->ep0out, ui->ep0out.max_pkt);
 
+#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-001 
 	INIT_WORK(&ui->chg_stop, usb_chg_stop);
+       INIT_DELAYED_WORK(&ui->chg_legacy_det, usb_chg_legacy_detect);
+#endif
 	INIT_WORK(&ui->li.wakeup_phy, usb_lpm_wakeup_phy);
 	INIT_DELAYED_WORK(&ui->work, usb_do_work);
-	INIT_DELAYED_WORK(&ui->chg_legacy_det, usb_chg_legacy_detect);
+	
 }
 
 static int usb_is_online(struct usb_info *ui)
@@ -1969,7 +2043,7 @@ static struct msm_otg_ops dcd_ops = {
 
 void usb_start(struct usb_info *ui)
 {
-	int i, ret;
+	int i;
 
 	for (i = 0; i < ui->num_funcs; i++) {
 		struct usb_function_info *fi = ui->func[i];
@@ -1990,6 +2064,7 @@ void usb_start(struct usb_info *ui)
 		queue_delayed_work(usb_work, &ui->work, 0);
 	} else {
 		/*Initialize pm app RPC */
+		#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11
 		ret = msm_pm_app_rpc_init();
 		if (ret) {
 			pr_err("%s: pm_app_rpc connect failed\n", __func__);
@@ -2021,6 +2096,12 @@ out:
 		ui->active = 1;
 		ui->flags |= (USB_FLAG_START | USB_FLAG_RESET);
 		queue_delayed_work(usb_work, &ui->work, 0);
+		#else
+		printk("hml usb start !\n");
+		ui->active = 1;
+		ui->flags |= (USB_FLAG_START | USB_FLAG_RESET);
+		queue_delayed_work(usb_work, &ui->work, 0);
+		#endif
 	}
 
 }
@@ -2049,7 +2130,9 @@ static void usb_try_to_bind(void)
 	struct usb_info *ui = the_usb_info;
 	unsigned long enabled_functions = 0;
 	int i;
-
+	//ruanmeisi_20100513
+	use_default_pid = 0;
+	//end
 	if (!ui || ui->bound || !ui->pdev || !ui->composition)
 		return;
 
@@ -2113,8 +2196,9 @@ int usb_function_register(struct usb_function *driver)
 	fi->func->ep0_out = &ui->ep0out;
 	fi->func->ep0_in = &ui->ep0in;
 	pr_info("%s: name = '%s',  map = %d\n", __func__, driver->name, index);
-
-	usb_try_to_bind();
+    
+       if(BIND_IN_KERNEL == get_bind_mode())//HML_USB_005
+	     usb_try_to_bind();
 fail:
 	mutex_unlock(&usb_function_list_lock);
 	return ret;
@@ -2212,7 +2296,7 @@ static void usb_switch_composition(unsigned short pid)
 	int i;
 	unsigned long flags;
 
-
+       pr_info("%s: usb_switch_composition start pid =%d \n", __func__,pid);
 	if (!ui->active)
 		return;
 	if (!usb_validate_product_id(pid))
@@ -2233,11 +2317,11 @@ static void usb_switch_composition(unsigned short pid)
 				disable_irq(ui->gpio_irq[0]);
 				disable_irq(ui->gpio_irq[1]);
 			}
-
+#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11
 			if (ui->usb_state == USB_STATE_NOTATTACHED
 						&& ui->vbus_sn_notif)
 				msm_pm_app_enable_usb_ldo(1);
-
+#endif
 			usb_lpm_exit(ui);
 			if (cancel_work_sync(&ui->li.wakeup_phy))
 				usb_lpm_wakeup_phy(NULL);
@@ -2405,8 +2489,10 @@ static void usb_do_work(struct work_struct *w)
 			if ((flags & USB_FLAG_START) ||
 					(flags & USB_FLAG_RESET)) {
 				disable_irq(ui->irq);
+				#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-01
 				if (ui->vbus_sn_notif)
 					msm_pm_app_enable_usb_ldo(1);
+				#endif
 				usb_clk_enable(ui);
 				usb_vreg_enable(ui);
 				usb_vbus_online(ui);
@@ -2419,9 +2505,11 @@ static void usb_do_work(struct work_struct *w)
 					msm_hsusb_suspend_locks_acquire(ui, 1);
 					ui->state = USB_STATE_ONLINE;
 					usb_enable_pullup(ui);
+					#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-001 
 					schedule_delayed_work(
 							&ui->chg_legacy_det,
 							USB_CHG_DET_DELAY);
+					#endif
 					pr_info("hsusb: IDLE -> ONLINE\n");
 				} else {
 					ui->usb_state = USB_STATE_NOTATTACHED;
@@ -2430,8 +2518,10 @@ static void usb_do_work(struct work_struct *w)
 					msleep(500);
 					usb_lpm_enter(ui);
 					pr_info("hsusb: IDLE -> OFFLINE\n");
+					#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-01
 					if (ui->vbus_sn_notif)
 						msm_pm_app_enable_usb_ldo(0);
+					#endif
 				}
 				enable_irq(ui->irq);
 				break;
@@ -2443,6 +2533,7 @@ static void usb_do_work(struct work_struct *w)
 			 * the signal to go offline, we must honor it
 			 */
 			if (flags & USB_FLAG_VBUS_OFFLINE) {
+#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-001 
 				enum charger_type temp;
 				unsigned long f;
 
@@ -2463,16 +2554,18 @@ static void usb_do_work(struct work_struct *w)
 					msm_chg_usb_i_is_not_available();
 					msm_chg_usb_charger_disconnected();
 				}
-
+	#endif	
 				/* reset usb core and usb phy */
 				disable_irq(ui->irq);
 				if (ui->in_lpm)
 					usb_lpm_exit(ui);
 				usb_vbus_offline(ui);
 				usb_lpm_enter(ui);
+				#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-01
 				if ((ui->vbus_sn_notif) &&
 				(ui->usb_state == USB_STATE_NOTATTACHED))
 					msm_pm_app_enable_usb_ldo(0);
+				#endif
 				ui->state = USB_STATE_OFFLINE;
 				enable_irq(ui->irq);
 				switch_set_state(&ui->sdev, 0);
@@ -2487,10 +2580,12 @@ static void usb_do_work(struct work_struct *w)
 			}
 			if ((flags & USB_FLAG_RESUME) ||
 					(flags & USB_FLAG_CONFIGURE)) {
+				#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-001 
 				int maxpower = usb_get_max_power(ui);
 
 				if (maxpower > 0)
 					msm_chg_usb_i_is_available(maxpower);
+				#endif
 
 				if (flags & USB_FLAG_CONFIGURE)
 					switch_set_state(&ui->sdev, 1);
@@ -2518,9 +2613,11 @@ static void usb_do_work(struct work_struct *w)
 					goto reset;
 				}
 				usb_enable_pullup(ui);
+				#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-001 
 				schedule_delayed_work(
 						&ui->chg_legacy_det,
 						USB_CHG_DET_DELAY);
+				#endif
 				pr_info("hsusb: OFFLINE -> ONLINE\n");
 				enable_irq(ui->irq);
 				break;
@@ -2546,7 +2643,9 @@ void msm_hsusb_set_vbus_state(int online)
 	struct usb_info *ui = the_usb_info;
 
 	if (ui && online) {
+		#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-01
 		msm_pm_app_enable_usb_ldo(1);
+		#endif
 		usb_lpm_exit(ui);
 		/* Turn on PHY comparators */
 		if (!(ulpi_read(ui, 0x30) & 0x01))
@@ -2685,6 +2784,7 @@ static void usb_disable_pullup(struct usb_info *ui)
 	enable_irq(ui->irq);
 }
 
+#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-001 
 static void usb_chg_stop(struct work_struct *w)
 {
 	struct usb_info *ui = the_usb_info;
@@ -2698,7 +2798,7 @@ static void usb_chg_stop(struct work_struct *w)
 	if (temp == USB_CHG_TYPE__SDP)
 		msm_chg_usb_i_is_not_available();
 }
-
+#endif
 static void usb_vbus_online(struct usb_info *ui)
 {
 	if (ui->in_lpm) {
@@ -2797,12 +2897,12 @@ void usb_function_reenumerate(void)
 	struct usb_info *ui = the_usb_info;
 
 	/* disable and re-enable the D+ pullup */
-	pr_info("hsusb: disable pullup\n");
+	printk("hml: hsusb disable pullup\n");
 	usb_disable_pullup(ui);
 
 	msleep(10);
 
-	pr_info("hsusb: enable pullup\n");
+	printk("hml:hsusb enable pullup\n");
 	usb_enable_pullup(ui);
 }
 
@@ -2871,7 +2971,7 @@ static ssize_t debug_write_reset(struct file *file, const char __user *buf,
 {
 	struct usb_info *ui = file->private_data;
 	unsigned long flags;
-
+       printk("hml: debug_write_reset start  \n");
 	spin_lock_irqsave(&ui->lock, flags);
 	ui->flags |= USB_FLAG_RESET;
 	queue_delayed_work(usb_work, &ui->work, 0);
@@ -2992,6 +3092,160 @@ static ssize_t msm_hsusb_store_func_enable(struct device *dev,
 	usb_function_enable(name, enable);
 	return size;
 }
+/*
+**HML_USB_004  add sysfs interface
+*/
+static ssize_t msm_hsusb_show_serialnumber(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct usb_info *ui = the_usb_info;
+	int i = 0;
+	if (ui->pdata->serial_number) {
+		i = scnprintf(buf, PAGE_SIZE,
+				"%s\n",
+					ui->pdata->serial_number);
+	}
+	return i;
+}
+
+char g_serial_number[256] = {0};
+
+static ssize_t msm_hsusb_store_serialnumber(struct device *dev,
+					  struct device_attribute *attr,
+					  const char *buf, size_t size)
+{
+       struct usb_info *ui = the_usb_info;
+       // reset iSerialNumber field for device descriptor
+       if (BIND_IN_USER == get_bind_mode()) {       	
+	       strncpy(g_serial_number, buf, sizeof(g_serial_number));
+		g_serial_number[sizeof(g_serial_number) - 1] = 0;
+		ui->pdata->serial_number = g_serial_number;	
+		if (ui->bound 
+			&& (desc_device.iSerialNumber >= 0)
+			&& (desc_device.iSerialNumber < MAX_STRDESC_NUM)
+			&& (ui->strdesc[desc_device.iSerialNumber])) {
+			char *tmp = kzalloc(strlen(g_serial_number) + 1, GFP_ATOMIC);
+			if(tmp) {
+				kfree(ui->strdesc[desc_device.iSerialNumber]);
+				ui->strdesc[desc_device.iSerialNumber] = tmp;
+				strcpy(ui->strdesc[desc_device.iSerialNumber], g_serial_number);
+			}		
+		}			
+		usb_try_to_bind();
+       }
+	
+	return size;
+}
+//HML_USB_004 end
+/*
+** HML_USB_20100513 debug enable sysfs interface
+*/
+static ssize_t msm_hsusb_show_debug_enable(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	int i = 0;	
+	i = scnprintf(buf, PAGE_SIZE,
+				"%d\n",
+					get_debug_enabled());
+	
+	return i;
+}
+
+static ssize_t msm_hsusb_store_debug_enable(struct device *dev,
+					  struct device_attribute *attr,
+					  const char *buf, size_t size)
+{
+       unsigned long debug_enable;
+      	if (!strict_strtoul(buf, 16, &debug_enable)) {
+		set_debug_enabled((int)debug_enable);
+		pr_info("%s: Requested g_debug_enabled = %d\n", __func__,g_debug_enabled);		
+	} 
+	else
+		pr_info("%s: strict_strtoul conversion failed\n", __func__);
+     
+	return size;
+}
+/*
+** HML_USB_20100513 debug enable sysfs interface
+*/
+static ssize_t msm_hsusb_show_pidnv(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	int i = 0;
+	i = scnprintf(buf, PAGE_SIZE,
+		      "nv %d\n",
+		      msm_hsusb_get_set_usb_conf_nv_value(NV_BACK_LIGHT_I,0,NV_READ));
+	return i;
+}
+
+static ssize_t msm_hsusb_set_pidnv(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t size)
+{
+	/* int i = 0; */
+	/* i = scnprintf(buf, PAGE_SIZE, */
+	/* 			"%s\n", */
+	/* 	      use_default_pid?"use default pid":""); */
+	
+	/* return i; */
+	int value;
+	sscanf(buf, "%d", &value);
+	msm_hsusb_get_set_usb_conf_nv_value(NV_BACK_LIGHT_I,value,NV_WRITE);
+	return size;
+}
+
+
+
+static ssize_t msm_hsusb_show_default_pid(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	/* int i = 0; */
+	/* i = scnprintf(buf, PAGE_SIZE, */
+	/* 			"%s\n", */
+	/* 	      use_default_pid?"use default pid":""); */
+	
+	/* return i; */
+	return 0;
+}
+
+
+
+static ssize_t msm_hsusb_store_default_pid(struct device *dev,
+					   struct device_attribute *attr,
+					   const char *buf, size_t size)
+{
+	struct usb_info *ui = the_usb_info;
+	unsigned long default_pid;
+	int i;
+	if (1 != use_default_pid || BIND_IN_KERNEL == get_bind_mode() || ui->bound){
+		pr_info("usb:%s: use_default_pid %d bound %d\n", __func__,
+			use_default_pid,
+			ui->bound);
+		return  size;
+	}
+	use_default_pid = 0;
+      	if (!strict_strtoul(buf, 16, &default_pid)) {
+		//set_default_pid((int)default_pid);
+		pr_info("usb:%s: default_pid 0x%x\n", __func__,
+			(unsigned int)default_pid);
+		for (i = 0; i < ui->pdata->num_compositions; i++) {
+			if (ui->pdata->compositions[i].product_id
+			    == default_pid) {
+				ui->composition = &ui->pdata->compositions[i];
+				break;
+			}
+		}
+	} else
+		pr_info("%s: strict_strtoul conversion failed\n", __func__);
+     
+	return size;
+}
+
+// HML_USB_20100513 end
 static ssize_t msm_hsusb_show_compswitch(struct device *dev,
 					 struct device_attribute *attr,
 					 char *buf)
@@ -3014,11 +3268,22 @@ static ssize_t msm_hsusb_store_compswitch(struct device *dev,
 					  const char *buf, size_t size)
 {
 	unsigned long pid;
+	int i,temp_pid;
 
 	if (!strict_strtoul(buf, 16, &pid)) {
 		pr_info("%s: Requested New Product id = %lx\n", __func__, pid);
 		usb_switch_composition((unsigned short)pid);
-	} else
+	       //HML_USB_004  restore pid in nv77
+		temp_pid = (int)pid;
+		printk("HML: restore pid =0x%x %d\n",temp_pid, ARRAY_SIZE(zte_usb_pid));
+		for(i = 0; i < ARRAY_SIZE(zte_usb_pid); i++){
+			if(temp_pid == zte_usb_pid[i])
+					break;
+		}
+		if(NV_WRITE_SUCCESS == msm_hsusb_get_set_usb_conf_nv_value(NV_BACK_LIGHT_I,i,NV_WRITE))
+			printk("HML: usb config restore successful\n");
+	} 
+	else
 		pr_info("%s: strict_strtoul conversion failed\n", __func__);
 
 	return size;
@@ -3082,6 +3347,16 @@ static DEVICE_ATTR(autoresume, 0222,
 static DEVICE_ATTR(state, 0664, msm_hsusb_show_state, NULL);
 static DEVICE_ATTR(lpm, 0664, msm_hsusb_show_lpm, NULL);
 static DEVICE_ATTR(speed, 0664, msm_hsusb_show_speed, NULL);
+//HML_USB_004 add sysfs interface
+static DEVICE_ATTR(serialnumber, 0664,
+		msm_hsusb_show_serialnumber, msm_hsusb_store_serialnumber);
+//add debug and default pid interface
+static DEVICE_ATTR(debug_enable, 0664,
+		msm_hsusb_show_debug_enable, msm_hsusb_store_debug_enable);
+static DEVICE_ATTR(default_pid, 0664,
+		msm_hsusb_show_default_pid, msm_hsusb_store_default_pid);
+static DEVICE_ATTR(pidnv, 0664,
+		   msm_hsusb_show_pidnv, msm_hsusb_set_pidnv);
 
 static struct attribute *msm_hsusb_attrs[] = {
 	&dev_attr_composition.attr,
@@ -3090,6 +3365,10 @@ static struct attribute *msm_hsusb_attrs[] = {
 	&dev_attr_state.attr,
 	&dev_attr_lpm.attr,
 	&dev_attr_speed.attr,
+	&dev_attr_serialnumber.attr,//HML_USB_004 add sysfs interface
+	&dev_attr_debug_enable.attr,//HML_USB_004 add sysfs interface
+	&dev_attr_default_pid.attr,//HML_USB_004 add sysfs interface
+	&dev_attr_pidnv.attr,//HML_USB_004 add sysfs interface
 	NULL,
 };
 static struct attribute_group msm_hsusb_attr_grp = {
@@ -3109,13 +3388,14 @@ static ssize_t  show_##function(struct device *dev,			\
 									\
 static DEVICE_ATTR(function, S_IRUGO, show_##function, NULL);
 
+// HML_USB_004: change order of functions, and delete ethernet/rmnet, we don't support now!
 msm_hsusb_func_attr(diag, 0);
-msm_hsusb_func_attr(adb, 1);
-msm_hsusb_func_attr(modem, 2);
-msm_hsusb_func_attr(nmea, 3);
-msm_hsusb_func_attr(mass_storage, 4);
-msm_hsusb_func_attr(ethernet, 5);
-msm_hsusb_func_attr(rmnet, 6);
+msm_hsusb_func_attr(modem, 1);
+msm_hsusb_func_attr(nmea, 2);
+msm_hsusb_func_attr(mass_storage, 3);
+msm_hsusb_func_attr(adb, 4);
+//msm_hsusb_func_attr(ethernet, 5);
+//msm_hsusb_func_attr(rmnet, 6);
 
 static struct attribute *msm_hsusb_func_attrs[] = {
 	&dev_attr_diag.attr,
@@ -3123,8 +3403,8 @@ static struct attribute *msm_hsusb_func_attrs[] = {
 	&dev_attr_modem.attr,
 	&dev_attr_nmea.attr,
 	&dev_attr_mass_storage.attr,
-	&dev_attr_ethernet.attr,
-	&dev_attr_rmnet.attr,
+	//&dev_attr_ethernet.attr,
+	//&dev_attr_rmnet.attr,
 	NULL,
 };
 
@@ -3132,6 +3412,30 @@ static struct attribute_group msm_hsusb_func_attr_grp = {
 	.name  = "functions",
 	.attrs = msm_hsusb_func_attrs,
 };
+/*USB-HML-003:  function used in usb_probe to indentity usb mode 
+ * param: 
+ * use_zte_config: if it's using zte signed pid list.
+*/
+static int  usb_config_mode_by_nv(int use_zte_config)
+{
+     int usb_conf_nv=0;
+     int rc=0;
+     int *usb_pid;
+	 	usb_pid = zte_usb_pid;
+     
+     usb_conf_nv = msm_hsusb_get_set_usb_conf_nv_value(NV_BACK_LIGHT_I,0,NV_READ);
+	printk("HML usb_probe: usb_conf_nv=%d, %d\n",
+	       usb_conf_nv, ARRAY_SIZE(zte_usb_pid));
+	if (0 <= usb_conf_nv && usb_conf_nv < ARRAY_SIZE(zte_usb_pid)){
+          use_default_pid=0;
+	   rc = usb_pid[usb_conf_nv];
+	} else {
+      	   rc = usb_pid[1]; //default adb +u port
+      	   use_default_pid=1;
+      	}
+            
+      return rc;
+}
 
 static int __init usb_probe(struct platform_device *pdev)
 {
@@ -3184,7 +3488,29 @@ static int __init usb_probe(struct platform_device *pdev)
 
 	ui->pdev = pdev;
 	ui->pdata = pdev->dev.platform_data;
+	
+	//HML_USB_004 add 
+	set_bind_mode((0x0112==ui->pdata->zte_pid)? BIND_IN_KERNEL:BIND_IN_USER);
+	 //hemulu add to switch usbmode
+	    pid = ui->pdata->zte_pid;
+	    if(0x112!=pid)//ZTE-USB-HML-02 start: if it is FTM mode do not read usb conf nv
+	    {
+	        //USB-HML-003  rpc read nv77 value to config usb mode. 
+	        pid = usb_config_mode_by_nv(1); 
+	        printk("HML usb_probe: pid=0x%x\n",pid);
+	       if(0x0112==pid)//to unify comport number with ftm and download mode
+	       {
+	            ui->pdata->serial_number = 0;	          
+	       }
+	    }
 
+	    //ruanmeisi_20100528 if serial_number is not default,bind in kernel
+	    if (NULL != ui->pdata->serial_number &&
+		0 != strcmp(ui->pdata->serial_number, "ZTE-HSUSB")) {
+		    set_bind_mode(BIND_IN_KERNEL);		    
+	    }
+	    //end
+	    
 	for (i = 0; i < ui->pdata->num_compositions; i++)
 		if (ui->pdata->compositions[i].product_id == pid) {
 			ui->composition = &ui->pdata->compositions[i];
@@ -3457,7 +3783,9 @@ static int __init usb_module_init(void)
 	/* rpc connect for phy_reset */
 	msm_hsusb_rpc_connect();
 	/* rpc connect for charging */
+	#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-001
 	msm_chg_rpc_connect();
+	#endif
 
 	return platform_driver_register(&usb_driver);
 }
@@ -3509,9 +3837,11 @@ static void usb_exit(void)
 	usb_debugfs_uninit();
 	platform_driver_unregister(&usb_driver);
 	msm_hsusb_rpc_close();
+	#ifdef CONFIG_HSU_CHARGER_TYPE_DETECT_ON_ARM11 //USB-HML-01
 	msm_chg_rpc_close();
 	msm_pm_app_unregister_vbus_sn(&msm_hsusb_set_vbus_state);
 	msm_pm_app_rpc_deinit();
+	#endif
 }
 
 static void __exit usb_module_exit(void)

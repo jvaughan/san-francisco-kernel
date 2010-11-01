@@ -80,7 +80,6 @@ static int gpio_led_probe(struct platform_device *pdev)
 
 	if (!pdata)
 		return -EBUSY;
-
 	leds_data = kzalloc(sizeof(struct gpio_led_data) * pdata->num_leds,
 				GFP_KERNEL);
 	if (!leds_data)
@@ -89,7 +88,6 @@ static int gpio_led_probe(struct platform_device *pdev)
 	for (i = 0; i < pdata->num_leds; i++) {
 		cur_led = &pdata->leds[i];
 		led_dat = &leds_data[i];
-
 		ret = gpio_request(cur_led->gpio, cur_led->name);
 		if (ret < 0)
 			goto err;

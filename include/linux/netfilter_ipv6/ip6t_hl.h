@@ -6,10 +6,10 @@
 #define _IP6T_HL_H
 
 enum {
-	IP6T_HL_EQ = 0,		/* equals */
-	IP6T_HL_NE,		/* not equals */
-	IP6T_HL_LT,		/* less than */
-	IP6T_HL_GT,		/* greater than */
+	IP6T_HL_EQ = 0,	 
+	IP6T_HL_NE,	 
+	IP6T_HL_LT,		 
+	IP6T_HL_GT,	 
 };
 
 

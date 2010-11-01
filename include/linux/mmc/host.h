@@ -148,8 +148,10 @@ struct mmc_host {
 	struct mmc_card		*card;		/* device attached to this host */
 
 	wait_queue_head_t	wq;
-
-	struct delayed_work	detect;
+ 
+	struct task_struct	*claimer;	 
+	int			claim_cnt;	 
+ 	struct delayed_work	detect;
 
 	const struct mmc_bus_ops *bus_ops;	/* current bus driver */
 	unsigned int		bus_refs;	/* reference counter */
@@ -180,7 +182,8 @@ struct mmc_host {
 	int			idle_timeout;
 	unsigned long		auto_suspend_state;
 #endif
-	unsigned long		private[0] ____cacheline_aligned;
+     int    last_suspend_error;
+ 	unsigned long		private[0] ____cacheline_aligned;
 };
 
 extern struct mmc_host *mmc_alloc_host(int extra, struct device *);

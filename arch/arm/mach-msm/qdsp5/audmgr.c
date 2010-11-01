@@ -28,6 +28,9 @@
 
 #include "audmgr.h"
 
+#include <linux/delay.h>
+
+
 #define STATE_CLOSED    0
 #define STATE_DISABLED  1
 #define STATE_ENABLING  2
@@ -270,6 +273,9 @@ int audmgr_open(struct audmgr *am)
 			amg->ept = NULL;
 			goto done;
 		}
+
+	msleep(23);
+
 	}
 
 	/* Initialize session parameters */

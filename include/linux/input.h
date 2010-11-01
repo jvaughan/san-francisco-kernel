@@ -374,7 +374,13 @@ struct input_absinfo {
 #define KEY_BRIGHTNESS_ZERO	244	/* brightness off, use ambient */
 #define KEY_DISPLAY_OFF		245	/* display device to off state */
 
-#define KEY_WIMAX		246
+#if defined(CONFIG_MACH_SMOOTH)
+#define KEY_FLIP_UP			246
+#define KEY_FLIP_DOWN		247
+#define KEY_WIMAX			248
+#else
+#define KEY_WIMAX			246
+#endif
 
 /* Range 248 - 255 is reserved for special needs of AT keyboard driver */
 

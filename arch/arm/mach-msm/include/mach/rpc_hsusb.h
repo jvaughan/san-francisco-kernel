@@ -18,6 +18,7 @@
  * along with this program; if not, you can find it at http://www.fsf.org
  */
 
+
 #ifndef __ASM_ARCH_MSM_RPC_HSUSB_H
 #define __ASM_ARCH_MSM_RPC_HSUSB_H
 
@@ -32,6 +33,7 @@ int msm_hsusb_vbus_shutdown(void);
 int msm_hsusb_send_productID(uint32_t product_id);
 int msm_hsusb_send_serial_number(char *serial_number);
 int msm_hsusb_is_serial_num_null(uint32_t val);
+int msm_hsusb_get_set_usb_conf_nv_value(uint32_t nv_item,uint32_t value,uint32_t is_write);//ZTE-USB-HML-02
 int msm_hsusb_reset_rework_installed(void);
 int msm_hsusb_enable_pmic_ulpidata0(void);
 int msm_hsusb_disable_pmic_ulpidata0(void);

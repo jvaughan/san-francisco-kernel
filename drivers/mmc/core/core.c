@@ -37,6 +37,10 @@
 #include "sd_ops.h"
 #include "sdio_ops.h"
 
+/* ATHENV */
+#define	ATH_WIFI_SDCC_INDEX		1
+/* ATHENV */
+
 static struct workqueue_struct *workqueue;
 static struct wake_lock mmc_delayed_work_wake_lock;
 
@@ -54,7 +58,9 @@ module_param(use_spi_crc, bool, 0);
 static int mmc_schedule_delayed_work(struct delayed_work *work,
 				     unsigned long delay)
 {
-	wake_lock(&mmc_delayed_work_wake_lock);
+//ruanmeisi_20100422
+	//wake_lock(&mmc_delayed_work_wake_lock);
+//end
 	return queue_delayed_work(workqueue, work, delay);
 }
 
@@ -353,16 +359,33 @@ int __mmc_claim_host(struct mmc_host *host, atomic_t *abort)
 	while (1) {
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		stop = abort ? atomic_read(abort) : 0;
+/* ATHENV */
+#if 0
 		if (stop || !host->claimed)
 			break;
+#else
+		if (stop || !host->claimed || host->claimer == current)
+			break;
+#endif
+/* ATHENV */
 		spin_unlock_irqrestore(&host->lock, flags);
 		schedule();
 		spin_lock_irqsave(&host->lock, flags);
 	}
 	set_current_state(TASK_RUNNING);
+/* ATHENV */
+#if 0
 	if (!stop)
 		host->claimed = 1;
 	else
+#else
+	if (!stop) {
+		host->claimed = 1;
+		host->claimer = current;
+		host->claim_cnt += 1;
+	} else
+#endif
+/* ATHENV */
 		wake_up(&host->wq);
 	spin_unlock_irqrestore(&host->lock, flags);
 	remove_wait_queue(&host->wq, &wait);
@@ -385,10 +408,23 @@ void mmc_release_host(struct mmc_host *host)
 	WARN_ON(!host->claimed);
 
 	spin_lock_irqsave(&host->lock, flags);
+/* ATHENV */
+#if 0
 	host->claimed = 0;
 	spin_unlock_irqrestore(&host->lock, flags);
 
+	wake_up(&host->wq)
+#else
+	if (--host->claim_cnt) {
+		spin_unlock_irqrestore(&host->lock, flags);
+	} else {
+		host->claimed = 0;
+		host->claimer = NULL;
+		spin_unlock_irqrestore(&host->lock, flags);
 	wake_up(&host->wq);
+}
+#endif
+/* ATHENV */
 }
 
 EXPORT_SYMBOL(mmc_release_host);
@@ -798,7 +834,9 @@ void mmc_rescan(struct work_struct *work)
 		container_of(work, struct mmc_host, detect.work);
 	u32 ocr;
 	int err;
-
+	//ruanmeisi_20100422
+	wake_lock(&mmc_delayed_work_wake_lock);
+	//end
 	mmc_bus_get(host);
 
 #ifdef CONFIG_MMC_AUTO_SUSPEND
@@ -867,7 +905,7 @@ out:
 	wake_lock_timeout(&mmc_delayed_work_wake_lock, HZ / 2);
 
 	if (host->caps & MMC_CAP_NEEDS_POLL)
-		mmc_schedule_delayed_work(&host->detect, HZ);
+		mmc_schedule_delayed_work(&host->detect, 2 * HZ);
 }
 
 void mmc_start_host(struct mmc_host *host)
@@ -916,13 +954,18 @@ void mmc_stop_host(struct mmc_host *host)
  */
 int mmc_suspend_host(struct mmc_host *host, pm_message_t state)
 {
+	int err = 0;
 	cancel_delayed_work(&host->detect);
 #ifdef CONFIG_MMC_AUTO_SUSPEND
 	cancel_delayed_work(&host->auto_suspend);
 #endif
+	pr_info("%s index = %d\n",  __FUNCTION__, host->index);
+
 	mmc_flush_scheduled_work();
 
 	mmc_bus_get(host);
+/* ATHENV */
+#if 0
 	if (host->bus_ops && !host->bus_dead) {
 		if (host->bus_ops->suspend)
 			host->bus_ops->suspend(host);
@@ -934,10 +977,39 @@ int mmc_suspend_host(struct mmc_host *host, pm_message_t state)
 			mmc_detach_bus(host);
 			mmc_release_host(host);
 		}
+#else
+	if (host->bus_ops && !host->bus_dead) {
+		if (host->bus_ops->suspend)
+			err = host->bus_ops->suspend(host);
+		if (err == -ENOSYS || !host->bus_ops->resume) {
+			/*
+			 * We simply "remove" the card in this case.
+			 * It will be redetected on resume.
+			 */
+			if (host->bus_ops->remove)
+				host->bus_ops->remove(host);
+
+			mmc_claim_host(host);
+			mmc_detach_bus(host);
+			mmc_release_host(host);
+			err = 0;
+		}
+#endif
+/* ATHENV */
 	}
 	mmc_bus_put(host);
+/* ATHENV */
+#if 0
 	mmc_power_off(host);
+
 	return 0;
+#else
+	if (!err)
+		mmc_power_off(host);
+	host->last_suspend_error = err;
+
+	return err;
+#endif
 }
 
 EXPORT_SYMBOL(mmc_suspend_host);
@@ -948,21 +1020,54 @@ EXPORT_SYMBOL(mmc_suspend_host);
  */
 int mmc_resume_host(struct mmc_host *host)
 {
+/* ATHENV */
+	int err = 0;
+/* ATHENV */
+	pr_info("%s index = %d\n",  __FUNCTION__, host->index);
+
 	mmc_bus_get(host);
 	if (host->bus_ops && !host->bus_dead) {
 		mmc_power_up(host);
 		BUG_ON(!host->bus_ops->resume);
+/* ATHENV */
+#if 0
 		host->bus_ops->resume(host);
+#else
+		err = host->bus_ops->resume(host);
+		if (err) {
+			printk(KERN_WARNING "%s: error %d during resume "
+					"(card was removed?)\n",
+					mmc_hostname(host), err);
+			if (host->bus_ops->remove)
+				host->bus_ops->remove(host);
+			mmc_claim_host(host);
+			mmc_detach_bus(host);
+			mmc_release_host(host);
+			/* no need to bother upper layers */
+			err = 0;
+		}
+#endif
+/* ATHENV */
 	}
 	mmc_bus_put(host);
-
+/* ATHENV */
+	if (host->index == ATH_WIFI_SDCC_INDEX) {		
+		pr_info("%s: mmc_resume_host in wifi slot skip cmd7\n",   mmc_hostname(host));
+		return err;
+	}
+/* ATHENV */
 	/*
 	 * We add a slight delay here so that resume can progress
 	 * in parallel.
 	 */
 	mmc_detect_change(host, 1);
-
+/* ATHENV */
+#if 0
 	return 0;
+#else
+	return err;
+#endif
+/* ATHENV */
 }
 
 EXPORT_SYMBOL(mmc_resume_host);
@@ -985,6 +1090,25 @@ void mmc_set_embedded_sdio_data(struct mmc_host *host,
 EXPORT_SYMBOL(mmc_set_embedded_sdio_data);
 #endif
 
+//ruanmeisi_091224
+void mmc_redetect_card(struct mmc_host *host)
+{
+	printk(KERN_ERR"%s:line:%d %s\n", mmc_hostname(host), __LINE__, __FUNCTION__);
+	if (NULL == host) {
+		return ;
+	}
+	mmc_stop_host(host);
+	mmc_start_host(host);
+}
+
+EXPORT_SYMBOL(mmc_redetect_card);
+
+int queue_redetect_work(struct work_struct *work)
+{
+	return queue_work(workqueue, work);
+}
+EXPORT_SYMBOL(queue_redetect_work);
+//end
 static int __init mmc_init(void)
 {
 	int ret;

@@ -16,6 +16,7 @@
  *      - Add a timer to simulate a pen_up in case there's a timeout.
  */
 
+
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/init.h>
@@ -27,6 +28,7 @@
 #include <linux/mfd/marimba-tsadc.h>
 
 #include <mach/msm_ts.h>
+#include <linux/jiffies.h>  
 
 #define TSSC_CTL			0x100
 #define 	TSSC_CTL_PENUP_IRQ	(1 << 12)
@@ -51,6 +53,7 @@
 #define TSSC_TEST_1			0x198
 	#define TSSC_TEST_1_EN_GATE_DEBOUNCE (1 << 2)
 #define TSSC_TEST_2			0x19c
+#define TS_PENUP_TIMEOUT_MS 70 // 20  -->  70  
 
 struct msm_ts {
 	struct msm_ts_platform_data	*pdata;
@@ -58,7 +61,7 @@ struct msm_ts {
 	void __iomem			*tssc_base;
 	uint32_t			ts_down:1;
 	struct ts_virt_key		*vkey_down;
-	struct marimba_tsadc_client	*ts_client;
+	struct timer_list timer;  
 };
 
 static uint32_t msm_tsdebug;
@@ -70,29 +73,19 @@ module_param_named(tsdebug, msm_tsdebug, uint, 0664);
 static void setup_next_sample(struct msm_ts *ts)
 {
 	uint32_t tmp;
-
-	/* 1.2ms debounce time */
-	tmp = ((2 << 7) | TSSC_CTL_DEBOUNCE_EN | TSSC_CTL_EN_AVERAGE |
+	/* 3ms debounce time */
+	tmp = ((5 << 7) | TSSC_CTL_DEBOUNCE_EN | TSSC_CTL_EN_AVERAGE |
 	       TSSC_CTL_MODE_MASTER | TSSC_CTL_ENABLE);
 	tssc_writel(ts, tmp, TSSC_CTL);
 }
 
-static struct ts_virt_key *find_virt_key(struct msm_ts *ts,
-					 struct msm_ts_virtual_keys *vkeys,
-					 uint32_t val)
+
+static void ts_timer(unsigned long arg)
 {
-	int i;
-
-	if (!vkeys)
-		return NULL;
-
-	for (i = 0; i < vkeys->num_keys; ++i)
-		if ((val >= vkeys->keys[i].min) && (val <= vkeys->keys[i].max))
-			return &vkeys->keys[i];
-	return NULL;
+	struct msm_ts *ts = (struct msm_ts *)arg;
+ 	input_report_key(ts->input_dev, BTN_TOUCH, 0);
+ 	input_sync(ts->input_dev);
 }
-
-
 static irqreturn_t msm_ts_irq(int irq, void *dev_id)
 {
 	struct msm_ts *ts = dev_id;
@@ -102,7 +95,8 @@ static irqreturn_t msm_ts_irq(int irq, void *dev_id)
 	int x, y, z1, z2;
 	int was_down;
 	int down;
-
+  int z=0;  
+  del_timer_sync(&ts->timer);
 	tssc_ctl = tssc_readl(ts, TSSC_CTL);
 	tssc_status = tssc_readl(ts, TSSC_STATUS);
 	tssc_avg12 = tssc_readl(ts, TSSC_AVG_12);
@@ -132,71 +126,35 @@ static irqreturn_t msm_ts_irq(int irq, void *dev_id)
 	if (msm_tsdebug & 2)
 		printk("%s: down=%d, x=%d, y=%d, z1=%d, z2=%d, status %x\n",
 		       __func__, down, x, y, z1, z2, tssc_status);
-
-	if (!was_down && down) {
-		struct ts_virt_key *vkey = NULL;
-
-		if (pdata->vkeys_y && (y > pdata->virt_y_start))
-			vkey = find_virt_key(ts, pdata->vkeys_y, x);
-		if (!vkey && ts->pdata->vkeys_x && (x > pdata->virt_x_start))
-			vkey = find_virt_key(ts, pdata->vkeys_x, y);
-
-		if (vkey) {
-			WARN_ON(ts->vkey_down != NULL);
-			if(msm_tsdebug)
-				printk("%s: virtual key down %d\n", __func__,
-				       vkey->key);
-			ts->vkey_down = vkey;
-			input_report_key(ts->input_dev, vkey->key, 1);
-			input_sync(ts->input_dev);
-			return IRQ_HANDLED;
+	if (down) 
+		{
+			if ( 0 == z1 ) return IRQ_HANDLED;
+			z = ( ( z2 - z1 - 2)*x) / ( z1 + 2 );
+			z = ( 2500 - z ) * 1000 / ( 2500 - 900 );
+			if( z < 0 ) return IRQ_HANDLED;
 		}
-	} else if (ts->vkey_down != NULL) {
-		if (!down) {
-			if(msm_tsdebug)
-				printk("%s: virtual key up %d\n", __func__,
-				       ts->vkey_down->key);
-			input_report_key(ts->input_dev, ts->vkey_down->key, 0);
-			input_sync(ts->input_dev);
-			ts->vkey_down = NULL;
-		}
-		return IRQ_HANDLED;
-	}
+	
 
-	if (down) {
+	if (down) 
+		{
 		input_report_abs(ts->input_dev, ABS_X, x);
 		input_report_abs(ts->input_dev, ABS_Y, y);
-		input_report_abs(ts->input_dev, ABS_PRESSURE, z1);
+			input_report_abs(ts->input_dev, ABS_PRESSURE, z);
 	}
 	input_report_key(ts->input_dev, BTN_TOUCH, down);
 	input_sync(ts->input_dev);
 
+	if (30 == irq)mod_timer(&ts->timer,jiffies + msecs_to_jiffies(TS_PENUP_TIMEOUT_MS));
 	return IRQ_HANDLED;
 }
-
-static void dump_tssc_regs(struct msm_ts *ts)
-{
-#define __dump_tssc_reg(r) \
-		do { printk(#r " %x\n", tssc_readl(ts, (r))); } while(0)
-
-	__dump_tssc_reg(TSSC_CTL);
-	__dump_tssc_reg(TSSC_OPN);
-	__dump_tssc_reg(TSSC_SAMPLING_INT);
-	__dump_tssc_reg(TSSC_STATUS);
-	__dump_tssc_reg(TSSC_AVG_12);
-	__dump_tssc_reg(TSSC_AVG_34);
-	__dump_tssc_reg(TSSC_TEST_1);
-#undef __dump_tssc_reg
-}
-
 static int __devinit msm_ts_hw_init(struct msm_ts *ts)
 {
+#if 0 
 	uint32_t tmp;
 
 	/* Enable the register clock to tssc so we can configure it. */
 	tssc_writel(ts, TSSC_CTL_ENABLE, TSSC_CTL);
 	/* Enable software reset*/
-	tssc_writel(ts, TSSC_CTL_SW_RESET, TSSC_CTL);
 
 	/* op1 - measure X, 1 sample, 12bit resolution */
 	tmp = (TSSC_OPN_4WIRE_X << 16) | (2 << 8) | (2 << 0);
@@ -215,8 +173,7 @@ static int __devinit msm_ts_hw_init(struct msm_ts *ts)
 	tssc_writel(ts, 16, TSSC_SAMPLING_INT);
 	/* Enable gating logic to fix the timing delays caused because of
 	 * enabling debounce logic */
-	tssc_writel(ts, TSSC_TEST_1_EN_GATE_DEBOUNCE, TSSC_TEST_1);
-
+#endif
 	setup_next_sample(ts);
 
 	return 0;
@@ -230,8 +187,6 @@ static int __devinit msm_ts_probe(struct platform_device *pdev)
 	struct resource *irq1_res;
 	struct resource *irq2_res;
 	int err = 0;
-	int i;
-	struct marimba_tsadc_client *ts_client;
 
 	tssc_res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "tssc");
 	irq1_res = platform_get_resource_byname(pdev, IORESOURCE_IRQ, "tssc1");
@@ -261,7 +216,7 @@ static int __devinit msm_ts_probe(struct platform_device *pdev)
 		err = -ENOMEM;
 		goto err_ioremap_tssc;
 	}
-
+#if 0
 	ts_client = marimba_tsadc_register(pdev, 1);
 	if (IS_ERR(ts_client)) {
 		err = -ENODEV;
@@ -276,7 +231,7 @@ static int __devinit msm_ts_probe(struct platform_device *pdev)
 		pr_err("%s: Unable to start TSADC\n", __func__);
 		goto err_start_tsadc;
 	}
-
+#endif
 	ts->input_dev = input_allocate_device();
 	if (ts->input_dev == NULL) {
 		pr_err("failed to allocate touchscreen input device\n");
@@ -296,19 +251,13 @@ static int __devinit msm_ts_probe(struct platform_device *pdev)
 	input_set_abs_params(ts->input_dev, ABS_PRESSURE, pdata->min_press,
 			     pdata->max_press, 0, 0);
 
-	for (i = 0; pdata->vkeys_x && (i < pdata->vkeys_x->num_keys); ++i)
-		input_set_capability(ts->input_dev, EV_KEY,
-				     pdata->vkeys_x->keys[i].key);
-	for (i = 0; pdata->vkeys_y && (i < pdata->vkeys_y->num_keys); ++i)
-		input_set_capability(ts->input_dev, EV_KEY,
-				     pdata->vkeys_y->keys[i].key);
-
 	err = input_register_device(ts->input_dev);
 	if (err != 0) {
 		pr_err("%s: failed to register input device\n", __func__);
 		goto err_input_dev_reg;
 	}
 
+  setup_timer(&ts->timer, ts_timer, (unsigned long)ts);  
 	msm_ts_hw_init(ts);
 
 	err = request_irq(irq1_res->start, msm_ts_irq,
@@ -331,7 +280,6 @@ static int __devinit msm_ts_probe(struct platform_device *pdev)
 
 	pr_info("%s: tssc_base=%p irq1=%d irq2=%d\n", __func__,
 		ts->tssc_base, (int)irq1_res->start, (int)irq2_res->start);
-	dump_tssc_regs(ts);
 	return 0;
 
 err_request_irq2:
@@ -339,6 +287,7 @@ err_request_irq2:
 
 err_request_irq1:
 	/* disable the tssc */
+	del_timer_sync(&ts->timer);
 	tssc_writel(ts, TSSC_CTL_ENABLE, TSSC_CTL);
 
 err_input_dev_reg:
@@ -346,17 +295,19 @@ err_input_dev_reg:
 	input_free_device(ts->input_dev);
 
 err_alloc_input_dev:
+#if 0
 err_start_tsadc:
 	marimba_tsadc_unregister(ts->ts_client);
 
 err_tsadc_register:
+#endif
 	iounmap(ts->tssc_base);
 
 err_ioremap_tssc:
 	kfree(ts);
 	return err;
 }
-
+#if 0
 static int __devexit msm_ts_remove(struct platform_device *pdev)
 {
 	struct msm_ts *ts = platform_get_drvdata(pdev);
@@ -376,28 +327,25 @@ static int __devexit msm_ts_remove(struct platform_device *pdev)
 
 	return 0;
 }
-
+#endif
 static struct platform_driver msm_touchscreen_driver = {
 	.driver = {
 		.name = "msm_touchscreen",
 		.owner = THIS_MODULE,
 	},
 	.probe = msm_ts_probe,
-	.remove = __devexit_p(msm_ts_remove),
 };
 
 static int __init msm_ts_init(void)
 {
 	return platform_driver_register(&msm_touchscreen_driver);
 }
-
+#if 0
 static void __exit msm_ts_exit(void)
 {
 	platform_driver_unregister(&msm_touchscreen_driver);
 }
-
+#endif
 device_initcall(msm_ts_init);
-module_exit(msm_ts_exit);
 MODULE_DESCRIPTION("Qualcomm MSM/QSD Touchscreen controller driver");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:msm_touchscreen");

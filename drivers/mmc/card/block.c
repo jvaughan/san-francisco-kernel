@@ -608,12 +608,22 @@ static int mmc_blk_probe(struct mmc_card *card)
 	return err;
 }
 
+
+int remove_all_req(struct mmc_queue *mq);
+
 static void mmc_blk_remove(struct mmc_card *card)
 {
 	struct mmc_blk_data *md = mmc_get_drvdata(card);
 
 	if (md) {
 		/* Stop new requests from getting into the queue */
+		//ruanmeisi_20100603
+		printk(KERN_ERR"rms:%s %d\n", __FUNCTION__, __LINE__);
+		queue_flag_set_unlocked(QUEUE_FLAG_DEAD,
+					md->queue.queue);
+		remove_all_req(&md->queue);
+		//end
+		
 		del_gendisk(md->disk);
 
 		/* Then flush out any already in there */
