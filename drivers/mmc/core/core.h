@@ -18,8 +18,15 @@
 struct mmc_bus_ops {
 	void (*remove)(struct mmc_host *);
 	void (*detect)(struct mmc_host *);
+/* ATHENV */
+#if 0
 	void (*suspend)(struct mmc_host *);
 	void (*resume)(struct mmc_host *);
+#else
+	int (*suspend)(struct mmc_host *);
+	int (*resume)(struct mmc_host *);
+#endif
+/* ATHENV */
 };
 
 void mmc_attach_bus(struct mmc_host *host, const struct mmc_bus_ops *ops);

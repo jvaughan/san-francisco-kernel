@@ -321,4 +321,19 @@ config MOUSE_PXA930_TRKBALL
 	help
 	  Say Y here to support PXA930 Trackball mouse.
 
+config AVAGO_OFN
+	tristate "AVAGO OFN(Optical Finger Navigation)"
+	depends on I2C_MSM && MACH_RAISE
+	default y
+	help
+	  Say Y here if you have a ofn attached.
+	  To compile this driver as a module, choose M here
+
+config JOGBALL_KEY
+  tristate "JOGBALL UP/DOWN/LEFT/RIGHT"
+  default n
+  help
+	  Say Y here if you have a jogball attached.
+	  To compile this driver as a module, choose M here
+
 endif

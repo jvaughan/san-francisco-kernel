@@ -18,8 +18,7 @@
 
 #define IPT_ECN_OP_MATCH_MASK	0xce
 
-/* match info */
-struct ipt_ecn_info {
+ struct ipt_ecn_info {
 	u_int8_t operation;
 	u_int8_t invert;
 	u_int8_t ip_ect;

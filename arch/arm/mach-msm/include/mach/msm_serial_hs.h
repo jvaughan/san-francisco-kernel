@@ -26,6 +26,11 @@ struct msm_serial_hs_platform_data {
 	char rx_to_inject;
 };
 
+#ifdef CONFIG_MODEMCTL
+#define MODEMCTL_UARTDM1_UNINIT  2
+unsigned int msm_hs_dm1_tx_empty(void);
+#endif
+
 unsigned int msm_hs_tx_empty(struct uart_port *uport);
 void msm_hs_request_clock_off(struct uart_port *uport);
 void msm_hs_request_clock_on(struct uart_port *uport);

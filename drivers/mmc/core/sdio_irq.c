@@ -144,7 +144,18 @@ static int sdio_irq_thread(void *_host)
 	if (host->caps & MMC_CAP_SDIO_IRQ)
 		host->ops->enable_sdio_irq(host, 0);
 
-	pr_debug("%s: IRQ thread exiting with code %d\n",
+/* ATHENV */
+           /* someone is trying to reclaim it? */ 
+           while (!kthread_should_stop()) { 
+                     pr_info("[%s]: [%d], wait for someone to reclaim\n", __func__, current->pid);
+                     set_current_state(TASK_INTERRUPTIBLE); 
+                     schedule_timeout(HZ); 
+                     set_current_state(TASK_RUNNING); 
+           } 
+           //wake_unlock(&mmc_sdio_irq_wake_lock);
+/* ATHENV */
+
+	pr_info("[WIFI]_%s: IRQ thread exiting with code %d\n",
 		 mmc_hostname(host), ret);
 
 	return ret;
@@ -180,7 +191,21 @@ static int sdio_card_irq_put(struct mmc_card *card)
 
 	if (!--host->sdio_irqs) {
 		atomic_set(&host->sdio_irq_thread_abort, 1);
+		/* ATHENV */
+#if 0
 		kthread_stop(host->sdio_irq_thread);
+#else
+		if (host->claimed) {
+			pr_info("[%s] host was claimed release it first\n", __FUNCTION__);
+			mmc_release_host(host);
+			kthread_stop(host->sdio_irq_thread);
+			mmc_claim_host(host);
+		} else {
+			kthread_stop(host->sdio_irq_thread);
+		}
+        pr_info("destroy  mmc_sdio_irq_wake_lock\n");	
+#endif
+/* ATHENV */
 	}
 
 	return 0;

@@ -54,6 +54,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  *
  */
+
 #include <linux/miscdevice.h>
 #include <linux/platform_device.h>
 #include <linux/fb.h>
@@ -253,10 +254,6 @@ int kgsl_pwrctrl(unsigned int pwrflag)
 			if (kgsl_driver.clk_freq[KGSL_3D_MIN_FREQ])
 				clk_set_min_rate(kgsl_driver.yamato_grp_src_clk,
 					kgsl_driver.clk_freq[KGSL_3D_MIN_FREQ]);
-			if ((kgsl_driver.g12_device.hwaccess_blocked ==
-				KGSL_TRUE) ||
-				(kgsl_driver.power_flags &
-				KGSL_PWRFLAGS_G12_CLK_OFF))
 				pm_qos_update_requirement(
 					PM_QOS_SYSTEM_BUS_FREQ,
 					DRIVER_NAME, PM_QOS_DEFAULT_VALUE);

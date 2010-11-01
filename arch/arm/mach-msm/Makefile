@@ -1,3 +1,4 @@
+
 obj-y += io.o dma.o memory.o
 obj-y += devices.o
 obj-y += proc_comm.o
@@ -91,7 +92,20 @@ obj-$(CONFIG_MACH_QSD8X50A_FFA) += board-qsd8x50.o
 obj-$(CONFIG_TROUT_H2W) += board-trout-h2w.o
 obj-$(CONFIG_TROUT_BATTCHG) += htc_battery.o
 obj-$(CONFIG_TROUT_PWRSINK) += htc_pwrsink.o
-obj-$(CONFIG_ARCH_MSM7X27) += board-msm7x27.o
+#obj-$(CONFIG_ARCH_MSM7X27) += board-msm7x27.o
+
+obj-$(CONFIG_MACH_MOONCAKE) += board-mooncake.o board-mooncake-keypad.o msm_vibrator.o
+
+obj-$(CONFIG_MACH_R750) += board-r750.o board-r750-keypad.o msm_vibrator.o
+
+obj-$(CONFIG_MACH_BLADE) += board-zte-blade.o board-zte-blade-keypad.o msm_vibrator.o
+
+obj-$(CONFIG_MACH_SMOOTH) += board-zte-smooth.o board-zte-smooth-keypad.o msm_vibrator.o
+
+obj-$(CONFIG_MACH_RAISE) += board-raise.o board-raise-keypad.o msm_vibrator.o
+
+obj-$(CONFIG_MACH_JOE) += board-joe.o board-joe-keypad.o msm_vibrator.o
+
 obj-$(CONFIG_ARCH_MSM7X30) += board-msm7x30.o clock-7x30.o
 obj-$(CONFIG_ARCH_MSM7X25) += board-msm7x27.o
 

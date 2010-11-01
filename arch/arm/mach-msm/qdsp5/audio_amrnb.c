@@ -25,6 +25,7 @@
  * along with this program; if not, you can find it at http://www.fsf.org
  */
 
+
 #include <mach/debug_audio_mm.h>
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -1272,6 +1273,7 @@ static void audamrnb_post_event(struct audio *audio, int type,
 }
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
+
 static void audamrnb_suspend(struct early_suspend *h)
 {
 	struct audamrnb_suspend_ctl *ctl =
@@ -1280,6 +1282,7 @@ static void audamrnb_suspend(struct early_suspend *h)
 
 	MM_DBG("\n"); /* Macro prints the file name and function */
 	audamrnb_post_event(ctl->audio, AUDIO_EVENT_SUSPEND, payload);
+	suspend_allow_suspend();
 }
 
 static void audamrnb_resume(struct early_suspend *h)
@@ -1290,7 +1293,9 @@ static void audamrnb_resume(struct early_suspend *h)
 
 	MM_DBG("\n"); /* Macro prints the file name and function */
 	audamrnb_post_event(ctl->audio, AUDIO_EVENT_RESUME, payload);
+	resume_prevent_suspend();
 }
+
 #endif
 
 #ifdef CONFIG_DEBUG_FS

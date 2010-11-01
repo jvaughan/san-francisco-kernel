@@ -15,6 +15,7 @@
  * 02110-1301, USA.
  *
  */
+ 
 
 #ifndef __LINUX_MSM_CAMERA_H
 #define __LINUX_MSM_CAMERA_H
@@ -106,6 +107,10 @@
 #define MSM_CAM_IOCTL_AF_CTRL_DONE \
 	_IOW(MSM_CAM_IOCTL_MAGIC, 26, struct msm_ctrl_cmt_t *)
 
+ 
+#define MSM_CAM_IOCTL_FLASH_LED_ON_OFF_CFG \
+	_IOW(MSM_CAM_IOCTL_MAGIC, 27, uint32_t *)
+
 #define MAX_SENSOR_NUM  3
 #define MAX_SENSOR_NAME 32
 
@@ -175,26 +180,26 @@ struct msm_camera_cfg_cmd {
 	void *value;
 };
 
-#define CMD_GENERAL			0
-#define CMD_AXI_CFG_OUT1		1
+#define CMD_GENERAL			        0
+#define CMD_AXI_CFG_OUT1		    1
 #define CMD_AXI_CFG_SNAP_O1_AND_O2	2
-#define CMD_AXI_CFG_OUT2		3
-#define CMD_PICT_T_AXI_CFG		4
-#define CMD_PICT_M_AXI_CFG		5
+#define CMD_AXI_CFG_OUT2		    3
+#define CMD_PICT_T_AXI_CFG		    4
+#define CMD_PICT_M_AXI_CFG		    5
 #define CMD_RAW_PICT_AXI_CFG		6
 
 #define CMD_FRAME_BUF_RELEASE		7
-#define CMD_PREV_BUF_CFG		8
+#define CMD_PREV_BUF_CFG		    8
 #define CMD_SNAP_BUF_RELEASE		9
-#define CMD_SNAP_BUF_CFG		10
-#define CMD_STATS_DISABLE		11
+#define CMD_SNAP_BUF_CFG		    10
+#define CMD_STATS_DISABLE		    11
 #define CMD_STATS_AEC_AWB_ENABLE	12
-#define CMD_STATS_AF_ENABLE		13
+#define CMD_STATS_AF_ENABLE		    13
 #define CMD_STATS_AEC_ENABLE		14
 #define CMD_STATS_AWB_ENABLE		15
-#define CMD_STATS_ENABLE  		16
+#define CMD_STATS_ENABLE  		    16
 
-#define CMD_STATS_AXI_CFG		17
+#define CMD_STATS_AXI_CFG		    17
 #define CMD_STATS_AEC_AXI_CFG		18
 #define CMD_STATS_AF_AXI_CFG 		19
 #define CMD_STATS_AWB_AXI_CFG		20
@@ -214,9 +219,9 @@ struct msm_camera_cfg_cmd {
 
 #define UPDATE_STATS_INVALID		33
 #define CMD_AXI_CFG_SNAP_GEMINI		34
-#define CMD_AXI_CFG_SNAP		35
-#define CMD_AXI_CFG_PREVIEW		36
-#define CMD_AXI_CFG_VIDEO		37
+#define CMD_AXI_CFG_SNAP		    35
+#define CMD_AXI_CFG_PREVIEW		    36
+#define CMD_AXI_CFG_VIDEO		    37
 
 #define CMD_STATS_IHIST_ENABLE 38
 #define CMD_STATS_RS_ENABLE 39
@@ -381,8 +386,13 @@ struct msm_snapshot_pp_status {
 #define CFG_GET_PICT_P_PL		25
 #define CFG_GET_AF_MAX_STEPS		26
 #define CFG_GET_PICT_MAX_EXP_LC		27
+ #define CFG_SET_SATURATION			28
+#define CFG_SET_SHARPNESS			29
+ 
+#define CFG_SET_AF                  30
+#define CFG_SET_ISO                 31
+#define CFG_MAX				        32
 #define CFG_SEND_WB_INFO    28
-#define CFG_MAX 			29
 
 #define MOVE_NEAR	0
 #define MOVE_FAR	1
@@ -404,7 +414,70 @@ struct msm_snapshot_pp_status {
 #define CAMERA_EFFECT_WHITEBOARD	6
 #define CAMERA_EFFECT_BLACKBOARD	7
 #define CAMERA_EFFECT_AQUA		8
-#define CAMERA_EFFECT_MAX		9
+#define CAMERA_EFFECT_BULISH	    9
+#define CAMERA_EFFECT_REDDISH	    10
+#define CAMERA_EFFECT_GREENISH	    11
+#define CAMERA_EFFECT_MAX		    12
+
+#define CAMERA_WB_MODE_AWB              1
+#define CAMERA_WB_MODE_CUSTOM           2
+#define CAMERA_WB_MODE_INCANDESCENT     3
+#define CAMERA_WB_MODE_FLUORESCENT      4
+#define CAMERA_WB_MODE_SUNLIGHT         5
+#define CAMERA_WB_MODE_CLOUDY           6
+#define CAMERA_WB_MODE_NIGHT            7
+#define CAMERA_WB_MODE_SHADE            8
+#define CAMERA_WB_MODE_MAX              9
+
+#define CAMERA_BRIGHTNESS_0             0
+#define CAMERA_BRIGHTNESS_1             1
+#define CAMERA_BRIGHTNESS_2             2
+#define CAMERA_BRIGHTNESS_3             3
+#define CAMERA_BRIGHTNESS_4             4
+#define CAMERA_BRIGHTNESS_5             5
+#define CAMERA_BRIGHTNESS_6             6
+#define CAMERA_BRIGHTNESS_MAX           7
+
+#define CAMERA_CONTRAST_0               0
+#define CAMERA_CONTRAST_1               1
+#define CAMERA_CONTRAST_2               2
+#define CAMERA_CONTRAST_3               3
+#define CAMERA_CONTRAST_4               4
+#define CAMERA_CONTRAST_MAX             5
+
+#define CAMERA_SATURATION_0             0
+#define CAMERA_SATURATION_1             1
+#define CAMERA_SATURATION_2             2
+#define CAMERA_SATURATION_3             3
+#define CAMERA_SATURATION_4             4
+#define CAMERA_SATURATION_MAX           5
+
+#define CAMERA_ISO_SET_AUTO             0
+#define CAMERA_ISO_SET_HJR              1
+#define CAMERA_ISO_SET_100              2
+#define CAMERA_ISO_SET_200              3
+#define CAMERA_ISO_SET_400              4
+#define CAMERA_ISO_SET_800              5
+#define CAMERA_ISO_SET_MAX              6
+
+#define CAMERA_ANTIBANDING_SET_OFF      0
+#define CAMERA_ANTIBANDING_SET_60HZ     1
+#define CAMERA_ANTIBANDING_SET_50HZ     2
+#define CAMERA_ANTIBANDING_SET_AUTO     3
+#define CAMERA_ANTIBANDING_MAX          4
+
+#define CAMERA_SHARPNESS_0              0
+#define CAMERA_SHARPNESS_1              1
+#define CAMERA_SHARPNESS_2              2
+#define CAMERA_SHARPNESS_3              3
+#define CAMERA_SHARPNESS_4              4
+#define CAMERA_SHARPNESS_5              5
+#define CAMERA_SHARPNESS_6              6
+#define CAMERA_SHARPNESS_7              7
+#define CAMERA_SHARPNESS_8              8
+#define CAMERA_SHARPNESS_9              9
+#define CAMERA_SHARPNESS_10             10
+#define CAMERA_SHARPNESS_MAX            11
 
 struct sensor_pict_fps {
 	uint16_t prevfps;
@@ -446,6 +519,17 @@ struct sensor_cfg_data {
 		uint16_t pictp_pl;
 		uint32_t pict_max_exp_lc;
 		uint16_t p_fps;
+
+   
+        int8_t wb_mode;
+        int8_t brightness;
+        int8_t contrast;
+        int8_t saturation;
+        int8_t sharpness;
+        int8_t iso_val;
+        int8_t antibanding;
+        int8_t lensshading;
+
 		struct sensor_pict_fps gfps;
 		struct exp_gain_cfg exp_gain;
 		struct focus_cfg focus;

@@ -601,7 +601,13 @@ static void mmc_sd_detect(struct mmc_host *host)
 /*
  * Suspend callback from host.
  */
+/* ATHENV */
+#if 0
 static void mmc_sd_suspend(struct mmc_host *host)
+#else
+static int mmc_sd_suspend(struct mmc_host *host)
+#endif
+/* ATHENV */
 {
 	BUG_ON(!host);
 	BUG_ON(!host->card);
@@ -611,6 +617,9 @@ static void mmc_sd_suspend(struct mmc_host *host)
 		mmc_deselect_cards(host);
 	host->card->state &= ~MMC_STATE_HIGHSPEED;
 	mmc_release_host(host);
+/* ATHENV */
+	return 0;
+/* ATHENV */
 }
 
 /*
@@ -619,7 +628,12 @@ static void mmc_sd_suspend(struct mmc_host *host)
  * This function tries to determine if the same card is still present
  * and, if so, restore all state to it.
  */
+/* ATHENV */
+#if 0
 static void mmc_sd_resume(struct mmc_host *host)
+#else
+static int mmc_sd_resume(struct mmc_host *host)
+#endif
 {
 	int err;
 #ifdef CONFIG_MMC_PARANOID_SD_INIT
@@ -648,7 +662,8 @@ static void mmc_sd_resume(struct mmc_host *host)
 	err = mmc_sd_init_card(host, host->ocr, host->card);
 #endif
 	mmc_release_host(host);
-
+/* ATHENV */
+#if 0
 	if (err) {
 		mmc_sd_remove(host);
 
@@ -656,7 +671,10 @@ static void mmc_sd_resume(struct mmc_host *host)
 		mmc_detach_bus(host);
 		mmc_release_host(host);
 	}
-
+#else
+	return err;
+#endif
+/* ATHENV */
 }
 
 #else

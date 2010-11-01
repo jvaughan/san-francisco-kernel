@@ -24,6 +24,8 @@
  * - disallow access to non-associated queues
  */
 
+
+
 #include <mach/debug_adsp_mm.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -36,14 +38,33 @@
 #include <linux/wakelock.h>
 
 static struct wake_lock adsp_wake_lock;
+
 static inline void prevent_suspend(void)
 {
+       if (!wake_lock_active(&adsp_wake_lock))
+       {
 	wake_lock(&adsp_wake_lock);
+}
 }
 static inline void allow_suspend(void)
 {
+       if (wake_lock_active(&adsp_wake_lock))
+       {
 	wake_unlock(&adsp_wake_lock);
 }
+}
+
+void resume_prevent_suspend(void)
+{
+       prevent_suspend();
+       MM_INFO("patch:resume_prevent_suspend\n");
+}
+void suspend_allow_suspend(void)
+{
+       allow_suspend();
+       MM_INFO("patch:suspend_allow_suspend\n");
+}
+
 
 #include <linux/io.h>
 #include <mach/msm_iomap.h>
@@ -427,8 +448,9 @@ int __msm_adsp_write(struct msm_adsp_module *module, unsigned dsp_queue_addr,
 	while (((ctrl_word = readl(info->write_ctrl)) &
 		ADSP_RTOS_WRITE_CTRL_WORD_READY_M) !=
 		ADSP_RTOS_WRITE_CTRL_WORD_READY_V) {
-		if (cnt > 50) {
+		if (cnt > (50 * 4)) {
 			MM_ERR("timeout waiting for DSP write ready\n");
+			MM_ERR("write:write_ctrl = %#x\n", readl(info->write_ctrl));
 			ret_status = -EIO;
 			goto fail;
 		}
@@ -464,8 +486,9 @@ int __msm_adsp_write(struct msm_adsp_module *module, unsigned dsp_queue_addr,
 	while ((readl(info->write_ctrl) &
 		ADSP_RTOS_WRITE_CTRL_WORD_MUTEX_M) ==
 		ADSP_RTOS_WRITE_CTRL_WORD_MUTEX_NAVAIL_V) {
-		if (cnt > 2500) {
+		if (cnt > (2500 * 4)) {
 			MM_ERR("timeout waiting for adsp ack\n");
+			MM_ERR("ack:write_ctrl = %#x\n", readl(info->write_ctrl));
 			ret_status = -EIO;
 			goto fail;
 		}
@@ -985,7 +1008,7 @@ int msm_adsp_enable(struct msm_adsp_module *module)
 
 	MM_INFO("enable '%s'state[%d] id[%d]\n",
 				module->name, module->state, module->id);
-
+	MM_INFO("adsp_open_count=%d\n", adsp_open_count);
 	mutex_lock(&module->lock);
 	switch (module->state) {
 	case ADSP_STATE_DISABLED:
@@ -995,9 +1018,16 @@ int msm_adsp_enable(struct msm_adsp_module *module)
 			break;
 		module->state = ADSP_STATE_ENABLING;
 		mutex_unlock(&module->lock);
+#if 0
+
 		rc = wait_event_timeout(module->state_wait,
 					module->state != ADSP_STATE_ENABLING,
 					1 * HZ);
+#else
+		rc = wait_event_timeout(module->state_wait,
+					module->state != ADSP_STATE_ENABLING,
+					5 * HZ);
+#endif
 		mutex_lock(&module->lock);
 		if (module->state == ADSP_STATE_ENABLED) {
 			rc = 0;
@@ -1049,12 +1079,17 @@ static int msm_adsp_disable_locked(struct msm_adsp_module *module)
 {
 	int rc = 0;
 
+	MM_INFO("disable_locked:'%s'state[%d]:id[%d]:adsp_open_count=%d\n",
+			   module->name, module->state, module->id, adsp_open_count);
+
 	switch (module->state) {
 	case ADSP_STATE_DISABLED:
 		MM_DBG("module '%s' already disabled\n", module->name);
+		MM_INFO("module '%s' already disabled\n", module->name);
 		break;
 	case ADSP_STATE_ENABLING:
 	case ADSP_STATE_ENABLED:
+		MM_INFO("module'%s' to disabled\n", module->name);
 		rc = rpc_adsp_rtos_app_to_modem(RPC_ADSP_RTOS_CMD_DISABLE,
 						module->id, module);
 		module->state = ADSP_STATE_DISABLED;
@@ -1067,6 +1102,7 @@ static int msm_adsp_disable_locked(struct msm_adsp_module *module)
 			MM_INFO("disable interrupt\n");
 		}
 		mutex_unlock(&adsp_open_lock);
+	MM_INFO("adsp_open_count=%d\n", adsp_open_count);
 	}
 	return rc;
 }

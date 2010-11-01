@@ -55,6 +55,7 @@
  *
  */
 
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
@@ -156,12 +157,23 @@ int mdp_lcdc_on(struct platform_device *pdev)
 	buf = (uint8 *) fbi->fix.smem_start;
 	buf += fbi->var.xoffset * bpp + fbi->var.yoffset * fbi->fix.line_length;
 
+#ifdef CONFIG_ZTE_PLATFORM
+	dma2_cfg_reg = DMA_PACK_ALIGN_MSB | DMA_DITHER_EN | DMA_OUT_SEL_LCDC;
+
+#else
 	dma2_cfg_reg = DMA_PACK_ALIGN_LSB | DMA_DITHER_EN | DMA_OUT_SEL_LCDC;
+#endif
 
 	if (mfd->fb_imgType == MDP_BGR_565)
 		dma2_cfg_reg |= DMA_PACK_PATTERN_BGR;
 	else
+		{
+		#ifdef CONFIG_FB_MSM_LCDC_OLED_WVGA
+		dma2_cfg_reg |= DMA_PACK_PATTERN_BGR;
+		#else
 		dma2_cfg_reg |= DMA_PACK_PATTERN_RGB;
+		#endif
+		}
 
 	if (bpp == 2)
 		dma2_cfg_reg |= DMA_IBUF_FORMAT_RGB565;

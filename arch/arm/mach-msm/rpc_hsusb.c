@@ -47,6 +47,7 @@ struct msm_hsusb_rpc_ids {
 	unsigned long	reset_rework_installed;
 	unsigned long	enable_pmic_ulpi_data0;
 	unsigned long	disable_pmic_ulpi_data0;
+	unsigned long	get_usb_conf_nv_value;
 };
 
 static struct msm_hsusb_rpc_ids usb_rpc_ids;
@@ -66,6 +67,7 @@ static int msm_hsusb_init_rpc_ids(unsigned long vers)
 		usb_rpc_ids.reset_rework_installed	= 17;
 		usb_rpc_ids.enable_pmic_ulpi_data0	= 18;
 		usb_rpc_ids.disable_pmic_ulpi_data0	= 19;
+		usb_rpc_ids.get_usb_conf_nv_value	= 99;
 		return 0;
 	} else if (vers == 0x00010002) {
 		usb_rpc_ids.prog			= 0x30000064;
@@ -79,6 +81,7 @@ static int msm_hsusb_init_rpc_ids(unsigned long vers)
 		usb_rpc_ids.reset_rework_installed	= 17;
 		usb_rpc_ids.enable_pmic_ulpi_data0	= 18;
 		usb_rpc_ids.disable_pmic_ulpi_data0	= 19;
+		usb_rpc_ids.get_usb_conf_nv_value	= 99;
 		return 0;
 	} else {
 		printk(KERN_INFO "%s: no matches found for version\n",
@@ -358,6 +361,51 @@ int msm_hsusb_is_serial_num_null(uint32_t val)
 	return rc;
 }
 EXPORT_SYMBOL(msm_hsusb_is_serial_num_null);
+int msm_hsusb_get_set_usb_conf_nv_value(uint32_t nv_item,uint32_t value,uint32_t is_write)
+{
+	int rc = 0;	
+	struct hsusb_phy_start_req {
+			struct rpc_request_hdr hdr;	
+			uint32_t nv_item;
+			uint32_t value;
+			uint32_t is_write;
+	} req;
+	struct nv23_value_rep {
+		struct rpc_reply_hdr hdr;
+		int value;		
+	} rep;
+	if (!usb_ep || IS_ERR(usb_ep)) {
+		printk(KERN_ERR "%s: rpc connect failed: rc = %ld\n",
+			__func__, PTR_ERR(usb_ep));
+		return -EAGAIN;
+	}
+	if (!usb_rpc_ids.get_usb_conf_nv_value) {
+		printk(KERN_ERR "%s: proc id not supported \n", __func__);
+		return -ENODATA;
+	}
+	req.nv_item = cpu_to_be32(nv_item);
+	req.value = cpu_to_be32(value);
+	req.is_write =cpu_to_be32(is_write);	
+	rc = msm_rpc_call_reply(usb_ep, usb_rpc_ids.get_usb_conf_nv_value,
+				&req, sizeof(req),
+				&rep, sizeof(rep),
+				5 * HZ);
+	printk("======return value=%d \n\n",be32_to_cpu(rep.value));
+	if (rc < 0)
+	{
+	    printk(KERN_ERR "%s: rpc call failed! error: %d\n" ,
+			__func__, rc);
+	    return rc;
+	}
+	else
+	{
+	printk(KERN_ERR "%s: rpc call success\n" ,
+			__func__);
+	}
+       rc = be32_to_cpu(rep.value);
+	return rc;
+}
+EXPORT_SYMBOL(msm_hsusb_get_set_usb_conf_nv_value);
 
 int msm_chg_usb_charger_connected(uint32_t device)
 {

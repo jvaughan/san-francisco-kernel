@@ -58,6 +58,7 @@
  * Shared memory logging implementation.
  */
 
+
 #include <linux/uaccess.h>
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -72,6 +73,8 @@
 #include <linux/sched.h>
 #include <linux/wait.h>
 #include <linux/delay.h>
+#include <linux/zte_memlog.h>
+#include <linux/vmalloc.h>
 
 #include <mach/msm_iomap.h>
 #include <mach/smem_log.h>
@@ -111,7 +114,7 @@ struct smem_log_item {
 	uint32_t data3;
 };
 
-#define SMEM_LOG_NUM_ENTRIES 2000
+#define SMEM_LOG_NUM_ENTRIES 20000
 #define SMEM_LOG_EVENTS_SIZE (sizeof(struct smem_log_item) * \
 			      SMEM_LOG_NUM_ENTRIES)
 
@@ -153,6 +156,27 @@ enum smem_logs {
 };
 
 static struct smem_log_inst inst[NUM];
+
+typedef struct {
+	uint32_t magic;
+	struct {
+		volatile uint32_t smem_log_write_idx;
+		volatile uint32_t smem_log_write_wrap;
+	} log_area_info[NUM];
+} smem_log_info;
+
+static smem_log_info *log_info;
+
+#define SMEM_LOG_MPROC_OFFSET   SMEM_LOG_ENTRY_OFFSET
+#define SMEM_LOG_STATIC_OFFSET  (SMEM_LOG_MPROC_OFFSET + SMEM_LOG_EVENTS_SIZE)
+#define SMEM_LOG_POWER_OFFSET   (SMEM_LOG_STATIC_OFFSET + SMEM_STATIC_LOG_EVENTS_SIZE)
+static uint32_t log_area_offset[NUM] = {
+  SMEM_LOG_MPROC_OFFSET,
+  SMEM_LOG_STATIC_OFFSET,
+  SMEM_LOG_POWER_OFFSET
+};
+
+#define SMEM_MAGIC  0xdeadbeef
 
 #if defined(CONFIG_DEBUG_FS)
 
@@ -846,16 +870,19 @@ static int _smem_log_init(void)
 {
 	int ret;
 
-	inst[GEN].which_log = GEN;
-	inst[GEN].events =
-		(struct smem_log_item *)smem_alloc(SMEM_SMEM_LOG_EVENTS,
-						  SMEM_LOG_EVENTS_SIZE);
-	inst[GEN].idx = (uint32_t *)smem_alloc(SMEM_SMEM_LOG_IDX,
-					     sizeof(uint32_t));
-	if (!inst[GEN].events || !inst[GEN].idx) {
-		pr_err("%s: no log or log_idx allocated, "
-		       "smem_log disabled\n", __func__);
+	log_info = (smem_log_info *)ioremap(MSM_SMEM_RAM_PHYS, MSM_SMEM_RAM_SIZE);
+	if (!log_info) {
+		pr_err("can't get remap MSM_RAM_CONSOLE_PHYS\n");
+		return -ENOMEM;
 	}
+	if (log_info->magic != SMEM_MAGIC) {
+		memset(log_info, 0, sizeof(*log_info));
+		log_info->magic = SMEM_MAGIC;
+	}
+
+	inst[GEN].which_log = GEN;
+	inst[GEN].events = (struct smem_log_item *)((uint32_t)log_info + log_area_offset[GEN]);
+	inst[GEN].idx = (uint32_t *)&(log_info->log_area_info[GEN].smem_log_write_idx);
 	inst[GEN].num = SMEM_LOG_NUM_ENTRIES;
 	inst[GEN].read_idx = 0;
 	inst[GEN].last_read_avail = SMEM_LOG_NUM_ENTRIES;
@@ -863,16 +890,8 @@ static int _smem_log_init(void)
 	inst[GEN].remote_spinlock = &remote_spinlock;
 
 	inst[STA].which_log = STA;
-	inst[STA].events =
-		(struct smem_log_item *)
-		smem_alloc(SMEM_SMEM_STATIC_LOG_EVENTS,
-			   SMEM_STATIC_LOG_EVENTS_SIZE);
-	inst[STA].idx = (uint32_t *)smem_alloc(SMEM_SMEM_STATIC_LOG_IDX,
-						     sizeof(uint32_t));
-	if (!inst[STA].events || !inst[STA].idx) {
-		pr_err("%s: no static log or log_idx "
-		       "allocated, smem_log disabled\n", __func__);
-	}
+	inst[STA].events = (struct smem_log_item *)((uint32_t)log_info + log_area_offset[STA]);
+	inst[STA].idx = (uint32_t *)&(log_info->log_area_info[STA].smem_log_write_idx);
 	inst[STA].num = SMEM_LOG_NUM_STATIC_ENTRIES;
 	inst[STA].read_idx = 0;
 	inst[STA].last_read_avail = SMEM_LOG_NUM_ENTRIES;
@@ -880,16 +899,8 @@ static int _smem_log_init(void)
 	inst[STA].remote_spinlock = &remote_spinlock_static;
 
 	inst[POW].which_log = POW;
-	inst[POW].events =
-		(struct smem_log_item *)
-		smem_alloc(SMEM_SMEM_LOG_POWER_EVENTS,
-			   SMEM_POWER_LOG_EVENTS_SIZE);
-	inst[POW].idx = (uint32_t *)smem_alloc(SMEM_SMEM_LOG_POWER_IDX,
-						     sizeof(uint32_t));
-	if (!inst[POW].events || !inst[POW].idx) {
-		pr_err("%s: no power log or log_idx "
-		       "allocated, smem_log disabled\n", __func__);
-	}
+	inst[POW].events = (struct smem_log_item *)((uint32_t)log_info + log_area_offset[POW]);
+	inst[POW].idx = (uint32_t *)&(log_info->log_area_info[POW].smem_log_write_idx);
 	inst[POW].num = SMEM_LOG_NUM_POWER_ENTRIES;
 	inst[POW].read_idx = 0;
 	inst[POW].last_read_avail = SMEM_LOG_NUM_ENTRIES;
@@ -1844,7 +1855,7 @@ static int debug_dump_voters(char *buf, int max, uint32_t cont)
 	return _debug_dump_voters(buf, max);
 }
 
-static char debug_buffer[EVENTS_PRINT_SIZE];
+static char *debug_buffer = NULL;
 
 static ssize_t debug_read(struct file *file, char __user *buf,
 			  size_t count, loff_t *ppos)
@@ -1852,11 +1863,24 @@ static ssize_t debug_read(struct file *file, char __user *buf,
 	int r;
 	static int bsize;
 	int (*fill)(char *, int, uint32_t) = file->private_data;
+
+	/* Use vmalloc, __get_free_pages may fail. */
+	if (!debug_buffer) {
+		debug_buffer = (char *)vmalloc(EVENTS_PRINT_SIZE);
+		if (!debug_buffer)
+			return 0;
+	}
 	if (!(*ppos))
 		bsize = fill(debug_buffer, EVENTS_PRINT_SIZE, 0);
 	DBG("%s: count %d ppos %d\n", __func__, count, (unsigned int)*ppos);
 	r =  simple_read_from_buffer(buf, count, ppos, debug_buffer,
 				     bsize);
+	if (r == 0) {
+		if (debug_buffer) {
+			vfree(debug_buffer);
+			debug_buffer = NULL;
+		}
+	}
 	return r;
 }
 

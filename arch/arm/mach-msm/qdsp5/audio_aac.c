@@ -17,6 +17,7 @@
  *
  */
 
+
 #include <mach/debug_audio_mm.h>
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -1474,6 +1475,7 @@ static void audaac_post_event(struct audio *audio, int type,
 }
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
+
 static void audaac_suspend(struct early_suspend *h)
 {
 	struct audaac_suspend_ctl *ctl =
@@ -1482,6 +1484,7 @@ static void audaac_suspend(struct early_suspend *h)
 
 	MM_DBG("\n"); /* Macro prints the file name and function */
 	audaac_post_event(ctl->audio, AUDIO_EVENT_SUSPEND, payload);
+	suspend_allow_suspend();
 }
 
 static void audaac_resume(struct early_suspend *h)
@@ -1492,7 +1495,9 @@ static void audaac_resume(struct early_suspend *h)
 
 	MM_DBG("\n"); /* Macro prints the file name and function */
 	audaac_post_event(ctl->audio, AUDIO_EVENT_RESUME, payload);
+	resume_prevent_suspend();
 }
+
 #endif
 
 #ifdef CONFIG_DEBUG_FS

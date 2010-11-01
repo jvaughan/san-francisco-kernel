@@ -99,4 +99,7 @@
 #define MSM_AD5_PHYS          0xAC000000
 #define MSM_AD5_SIZE          (SZ_1M*13)
 
+#define MSM_SMEM_RAM_PHYS     0x00200000
+#define MSM_SMEM_RAM_SIZE     SZ_1M
+
 #endif

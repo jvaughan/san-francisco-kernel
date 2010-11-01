@@ -10,6 +10,7 @@
  *
  * - Based on mmci.h
  */
+/*ruanmeisi 20100510  ruanmeisi_20100510 timer for send command*/
 
 #ifndef _MSM_SDCC_H
 #define _MSM_SDCC_H
@@ -266,6 +267,11 @@ struct msmsdcc_host {
 	unsigned int	mci_irqenable;
 	unsigned int	dummy_52_needed;
 	unsigned int	dummy_52_state;
+
+        //ruanmeisi_091224 redetect worker
+	struct work_struct	redetect;
+	//ruanmeisi_20100510
+	struct timer_list       command_timer;
 
 };
 

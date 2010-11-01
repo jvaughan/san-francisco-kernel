@@ -21,6 +21,8 @@ obj-$(CONFIG_MOUSE_MSM_TOUCHPAD)	+= msm_touchpad.o
 obj-$(CONFIG_MOUSE_OFN_ATLAB)           += ofn_atlab.o
 obj-$(CONFIG_MOUSE_OFN_ATLAB_M33C01)	+= ofn_m33c01_atlab.o
 obj-$(CONFIG_MOUSE_GPIO)		+= gpio_mouse.o
+obj-$(CONFIG_AVAGO_OFN) += avago_ofn.o
+obj-$(CONFIG_JOGBALL_KEY) += jogball_key.o
 
 psmouse-objs := psmouse-base.o synaptics.o
 

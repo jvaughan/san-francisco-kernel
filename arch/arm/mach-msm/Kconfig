@@ -108,6 +108,111 @@ config MACH_MSM7X27_SURF
 	bool "MSM7x27 SURF"
 	help
 	  Support for the Qualcomm MSM7x27 SURF eval board.
+	  
+# ZTE_PLATFORM
+config ZTE_PLATFORM
+	depends on ARCH_MSM
+	depends on !MSM_STACKED_MEMORY
+	default y
+	bool "ZTE Platform."
+	help
+	  Support for the ZTE Platform.
+
+# ZTE mooncake
+config MACH_MOONCAKE
+	depends on ARCH_MSM
+	depends on !MSM_STACKED_MEMORY
+	default n
+	bool "ZTE mooncake board."
+	help
+	  Support for the ZTE mooncake board.
+
+# ZTE blade
+config MACH_BLADE
+	depends on ARCH_MSM
+	depends on !MSM_STACKED_MEMORY
+	default n
+	bool "ZTE blade board."
+	help
+	  Support for the ZTE blade board.
+	  
+# ZTE smooth
+config MACH_SMOOTH
+	depends on ARCH_MSM
+	depends on !MSM_STACKED_MEMORY
+	default n
+	bool "ZTE smooth board."
+	help
+	  Support for the ZTE smooth board.
+
+# ZTE raise
+config MACH_RAISE
+	depends on ARCH_MSM
+	depends on !MSM_STACKED_MEMORY
+	default n
+	bool "ZTE raise board."
+	help
+	  Support for the ZTE raise board.
+	  
+# ZTE joe
+config MACH_JOE
+	depends on ARCH_MSM
+	depends on !MSM_STACKED_MEMORY
+	default n
+	bool "ZTE joe board."
+	help
+	  Support for the ZTE joe board.
+
+# ZTE R750
+config MACH_R750
+	depends on ARCH_MSM
+	depends on !MSM_STACKED_MEMORY
+	default n
+	bool "ZTE R750 board."
+	help
+	  Support for the ZTE R750 board.
+
+# ZTE ZTE_MULTIMODE
+config ZTE_MULTIMODE
+	depends on ARCH_MSM
+	depends on !MSM_STACKED_MEMORY
+	default n
+	bool "ZTE MULTIMODE."
+	help
+	  Support for ZTE MULTIMODE.
+
+# ZTE ZTE_CG_MULTIMODE
+config ZTE_CG_MULTIMODE
+	depends on ARCH_MSM
+	depends on !MSM_STACKED_MEMORY
+	default n
+	bool "ZTE CG_MULTIMODE."
+	help
+	  Support for ZTE CG_MULTIMODE.
+
+# ZTE ZTE_CDMA_NETWORK_TEST
+config ZTE_CDMA_NETWORK_TEST
+	depends on ARCH_MSM
+	depends on !MSM_STACKED_MEMORY
+	default n
+	bool "ZTE CDMA_NETWORK_TEST."
+	help
+	  Support for ZTE CDMA_NETWORK_TEST.
+
+# ZTE ZTE_TELECOM_TEST
+config ZTE_TELECOM_TEST
+	depends on ARCH_MSM
+	depends on !MSM_STACKED_MEMORY
+	default n
+	bool "ZTE TELECOM_TEST."
+	help
+	  Support for ZTE TELECOM_TEST.
+
+# ZTE_FTM_FLAG_SUPPORT
+config ZTE_FTM_FLAG_SUPPORT
+	depends on ZTE_PLATFORM
+	default y
+	bool "enable ZTE handset FTM mode detect."
 
 config MACH_MSM7X27_FFA
 	depends on ARCH_MSM7X27
@@ -235,7 +340,7 @@ config MSM_STACKED_MEMORY
 
 config PHYS_OFFSET
 	hex
-	default "0x00200000" if !MSM_STACKED_MEMORY
+	default "0x02A00000" if !MSM_STACKED_MEMORY
 	default "0x00000000" if ARCH_QSD8X50 && MSM_SOC_REV_A
 	default "0x20000000" if ARCH_QSD8X50
 	default "0x10000000"

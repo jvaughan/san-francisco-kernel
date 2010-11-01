@@ -20,6 +20,14 @@
 #include <linux/interrupt.h>
 #include <linux/wakelock.h>
 
+#if defined(CONFIG_MACH_R750)
+#define TS_KEY_REPORT 
+#endif
+
+#if defined(CONFIG_MACH_SMOOTH)
+#define FLIP_DET 
+#endif
+
 struct gpio_kp {
 	struct input_dev *input_dev;
 	struct gpio_event_matrix_info *keypad_info;
@@ -32,6 +40,55 @@ struct gpio_kp {
 	unsigned int some_keys_pressed:2;
 	unsigned long keys_pressed[0];
 };
+
+#ifdef FLIP_DET
+#define FLIP_DET_IRQ MSM_GPIO_TO_INT(49)
+
+static irqreturn_t flip_detect_irq_handler(int irq, void *dev_id)
+{
+	struct gpio_kp *kp = dev_id;
+
+	disable_irq_nosync(irq);
+
+	if(gpio_get_value(49) == 0)
+	{
+		input_report_key(kp->input_dev, KEY_FLIP_DOWN, 1);
+		input_report_key(kp->input_dev, KEY_FLIP_DOWN, 0);
+	}
+	else
+	{
+		input_report_key(kp->input_dev, KEY_FLIP_UP, 1);
+		input_report_key(kp->input_dev, KEY_FLIP_UP, 0);
+	}
+
+	enable_irq(irq);
+	return IRQ_HANDLED;
+}
+
+static int slip_detect_init(struct gpio_kp *kp)
+{
+	int err;
+
+	err = request_irq(FLIP_DET_IRQ, flip_detect_irq_handler, (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING), "gpio-event", kp);//ZTE_KEY_ZT_20100513_003
+	if (err) 
+	{
+		pr_err("gpiomatrix: request_irq failed for flip detect\n");
+		goto err_request_irq_failed;
+	}
+
+	err = set_irq_wake(FLIP_DET_IRQ, 1);
+	if (err)
+	{
+		pr_err("gpiomatrix: request_irq failed for flip detect\n");
+		goto err_request_irq_failed;
+	}
+	return 0;
+
+err_request_irq_failed:
+	free_irq(FLIP_DET_IRQ, kp);
+	return 1;
+}
+#endif
 
 static void clear_phantom_key(struct gpio_kp *kp, int out, int in)
 {
@@ -131,7 +188,11 @@ static enum hrtimer_restart gpio_keypad_timer_func(struct hrtimer *timer)
 	struct gpio_kp *kp = container_of(timer, struct gpio_kp, timer);
 	struct gpio_event_matrix_info *mi = kp->keypad_info;
 	unsigned gpio_keypad_flags = mi->flags;
+#ifdef CONFIG_ZTE_PLATFORM
+	unsigned polarity = !!(gpio_keypad_flags & !GPIOKPF_ACTIVE_HIGH);
+#else
 	unsigned polarity = !!(gpio_keypad_flags & GPIOKPF_ACTIVE_HIGH);
+#endif
 
 	out = kp->current_output;
 	if (out == mi->noutputs) {
@@ -218,7 +279,12 @@ static irqreturn_t gpio_keypad_irq_handler(int irq_in, void *dev_id)
 	for (i = 0; i < mi->noutputs; i++) {
 		if (gpio_keypad_flags & GPIOKPF_DRIVE_INACTIVE)
 			gpio_set_value(mi->output_gpios[i],
+#ifdef CONFIG_ZTE_PLATFORM
+				(gpio_keypad_flags & GPIOKPF_ACTIVE_HIGH));
+#else
 				!(gpio_keypad_flags & GPIOKPF_ACTIVE_HIGH));
+#endif
+
 		else
 			gpio_direction_input(mi->output_gpios[i]);
 	}
@@ -246,7 +312,12 @@ static int gpio_keypad_request_irqs(struct gpio_kp *kp)
 		request_flags = IRQF_TRIGGER_LOW;
 		break;
 	case GPIOKPF_LEVEL_TRIGGERED_IRQ | GPIOKPF_ACTIVE_HIGH:
+#ifdef CONFIG_ZTE_PLATFORM
+		request_flags = IRQF_TRIGGER_LOW;
+#else
 		request_flags = IRQF_TRIGGER_HIGH;
+#endif
+
 		break;
 	}
 
@@ -261,11 +332,13 @@ static int gpio_keypad_request_irqs(struct gpio_kp *kp)
 				"irq %d\n", mi->input_gpios[i], irq);
 			goto err_request_irq_failed;
 		}
+#ifndef CONFIG_ZTE_PLATFORM
 		err = set_irq_wake(irq, 1);
 		if (err) {
 			pr_err("gpiomatrix: set_irq_wake failed for input %d, "
 				"irq %d\n", mi->input_gpios[i], irq);
 		}
+#endif
 		disable_irq(irq);
 	}
 	return 0;
@@ -278,6 +351,16 @@ err_gpio_get_irq_num_failed:
 	}
 	return err;
 }
+
+#ifdef TS_KEY_REPORT
+struct input_dev *input_keypad_dev = NULL;
+
+struct input_dev *get_keyinput_dev(void)
+{
+	return input_keypad_dev;
+}
+EXPORT_SYMBOL(get_keyinput_dev);
+#endif
 
 int gpio_event_matrix_func(struct input_dev *input_dev,
 	struct gpio_event_info *info, void **data, int func)
@@ -319,6 +402,18 @@ int gpio_event_matrix_func(struct input_dev *input_dev,
 				__set_bit(mi->keymap[i], input_dev->keybit);
 		}
 
+#ifdef TS_KEY_REPORT
+		__set_bit(KEY_MENU, input_dev->keybit);
+		__set_bit(KEY_HOME, input_dev->keybit);
+		__set_bit(KEY_BACK, input_dev->keybit);
+		input_keypad_dev = kp->input_dev;
+#endif
+
+#ifdef FLIP_DET
+		__set_bit(KEY_FLIP_UP, input_dev->keybit);
+		__set_bit(KEY_FLIP_DOWN, input_dev->keybit);
+#endif
+
 		for (i = 0; i < mi->noutputs; i++) {
 			if (gpio_cansleep(mi->output_gpios[i])) {
 				pr_err("gpiomatrix: unsupported output gpio %d,"
@@ -334,7 +429,11 @@ int gpio_event_matrix_func(struct input_dev *input_dev,
 			}
 			if (mi->flags & GPIOKPF_DRIVE_INACTIVE)
 				err = gpio_direction_output(mi->output_gpios[i],
+#ifdef CONFIG_ZTE_PLATFORM
+					(mi->flags & GPIOKPF_ACTIVE_HIGH));
+#else		
 					!(mi->flags & GPIOKPF_ACTIVE_HIGH));
+#endif
 			else
 				err = gpio_direction_input(mi->output_gpios[i]);
 			if (err) {
@@ -375,6 +474,11 @@ int gpio_event_matrix_func(struct input_dev *input_dev,
 		hrtimer_start(&kp->timer, ktime_set(0, 10000),
 				 HRTIMER_MODE_REL);
 
+#ifdef FLIP_DET
+		err  = slip_detect_init(kp);
+		if (err != 0)
+			pr_info("PIO Matrix Keypad Driver: init for slip detect failed\n");
+#endif
 		return 0;
 	}
 
