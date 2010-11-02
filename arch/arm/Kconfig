@@ -1353,6 +1353,8 @@ source "drivers/usb/Kconfig"
 
 source "drivers/uwb/Kconfig"
 
+#source "drivers/ar6000/Kconfig"
+
 source "drivers/mmc/Kconfig"
 
 source "drivers/memstick/Kconfig"
