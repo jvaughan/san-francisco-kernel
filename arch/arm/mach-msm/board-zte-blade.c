@@ -858,18 +858,14 @@ static struct i2c_board_info i2c_devices[] = {
 	},
 #endif
 
-#ifdef CONFIG_MT9P111
-
-    {
-        I2C_BOARD_INFO("mt9p111", 0x7A >> 1),
-    },
-#endif
-
 #ifdef CONFIG_MT9T11X
 
+#if !defined(CONFIG_SENSOR_ADAPTER)
     {
         I2C_BOARD_INFO("mt9t11x", 0x7A >> 1),
     },
+#else
+#endif
 #endif
 
 #ifdef CONFIG_MT9V113
@@ -881,9 +877,12 @@ static struct i2c_board_info i2c_devices[] = {
 
 #ifdef CONFIG_OV5642
   
+#if !defined(CONFIG_SENSOR_ADAPTER)
     {
         I2C_BOARD_INFO("ov5642", 0x78 >> 1),
     },
+#else
+#endif
 #endif
 #ifdef CONFIG_MACH_BLADE
 	{
