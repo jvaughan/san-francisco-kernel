@@ -990,9 +990,12 @@ static struct i2c_board_info i2c_devices[] = {
 
 #ifdef CONFIG_MT9T11X
 
+#if !defined(CONFIG_SENSOR_ADAPTER)
     {
         I2C_BOARD_INFO("mt9t11x", 0x7A >> 1),
     },
+#else
+#endif
 #endif
 
 #ifdef CONFIG_MT9V113

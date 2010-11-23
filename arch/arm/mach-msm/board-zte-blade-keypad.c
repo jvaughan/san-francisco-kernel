@@ -12,7 +12,7 @@ static unsigned int keypad_col_gpios[] = {37, 41, 40};
 #define KEYMAP_INDEX(row, col) ((row)*ARRAY_SIZE(keypad_col_gpios) + (col))
 
 
-static const unsigned short keypad_keymap_blade[ARRAY_SIZE(keypad_col_gpios) *
+static const unsigned short keypad_keymap_mooncake[ARRAY_SIZE(keypad_col_gpios) *
 					      ARRAY_SIZE(keypad_row_gpios)] = {
 	[KEYMAP_INDEX(0, 0)] = KEY_BACK, 
 	[KEYMAP_INDEX(0, 1)] = 0, 
@@ -22,14 +22,14 @@ static const unsigned short keypad_keymap_blade[ARRAY_SIZE(keypad_col_gpios) *
 	[KEYMAP_INDEX(1, 2)] = KEY_HOME,
 };
 
-static const unsigned short blade_keypad_virtual_keys[] = {
+static const unsigned short mooncake_keypad_virtual_keys[] = {
 	KEY_END,
 	KEY_POWER
 };
 
-static struct gpio_event_matrix_info blade_keypad_matrix_info = {
+static struct gpio_event_matrix_info mooncake_keypad_matrix_info = {
 	.info.func	= gpio_event_matrix_func,
-	.keymap		= keypad_keymap_blade,
+	.keymap		= keypad_keymap_mooncake,
 	.output_gpios	= keypad_row_gpios,
 	.input_gpios	= keypad_col_gpios,
 	.noutputs	= ARRAY_SIZE(keypad_row_gpios),
@@ -44,36 +44,36 @@ static struct gpio_event_matrix_info blade_keypad_matrix_info = {
 #endif
 };
 
-static struct gpio_event_info *blade_keypad_info[] = {
-	&blade_keypad_matrix_info.info
+static struct gpio_event_info *mooncake_keypad_info[] = {
+	&mooncake_keypad_matrix_info.info
 };
 
-static struct gpio_event_platform_data blade_keypad_data = {
-	.name		= "blade_keypad",
-	.info		= blade_keypad_info,
-	.info_count	= ARRAY_SIZE(blade_keypad_info)
+static struct gpio_event_platform_data mooncake_keypad_data = {
+	.name		= "mooncake_keypad",
+	.info		= mooncake_keypad_info,
+	.info_count	= ARRAY_SIZE(mooncake_keypad_info)
 };
 
-struct platform_device keypad_device_blade = {
+struct platform_device keypad_device_mooncake = {
 	.name	= GPIO_EVENT_DEV_NAME,
 	.id	= -1,
 	.dev	= {
-		.platform_data	= &blade_keypad_data,
+		.platform_data	= &mooncake_keypad_data,
 	},
 };
 #ifdef CONFIG_ZTE_FTM_FLAG_SUPPORT
 extern int zte_get_ftm_flag(void);
 #endif
-static int __init blade_init_keypad(void)
+static int __init mooncake_init_keypad(void)
 {
 	#ifdef CONFIG_ZTE_FTM_FLAG_SUPPORT
 	int ftm_flag;
 	ftm_flag = zte_get_ftm_flag();
 	if (1 ==ftm_flag)return 0;
 	#endif
-	blade_keypad_matrix_info.keymap = keypad_keymap_blade;
-	return platform_device_register(&keypad_device_blade);
+	mooncake_keypad_matrix_info.keymap = keypad_keymap_mooncake;
+	return platform_device_register(&keypad_device_mooncake);
 }
 
-device_initcall(blade_init_keypad);
+device_initcall(mooncake_init_keypad);
 

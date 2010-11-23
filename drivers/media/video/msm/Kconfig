@@ -48,6 +48,14 @@ config MT9T11X_QTECH_MCNEX_FPC
 	default y
 	---help---
 	  APTINA 3.1M YUV Sensor
+
+config MT9T11X_QTECH_MCNEX_SOCKET
+	bool "Sensor mt9t111 or mt9t112 (YUV 3.1M)"
+	depends on MSM_CAMERA
+	depends on MACH_MOONCAKE || MACH_JOE || MACH_R750 || MACH_AMIGO
+	default y
+	---help---
+	  APTINA 3.1M YUV Sensor
 endif # MT9T11X
 	  
 choice
@@ -87,6 +95,13 @@ config VB6801
 	---help---
 	  5M with flash
 	  
+config SENSOR_ADAPTER
+	bool "Adapter for different sensors"
+	depends on MSM_CAMERA
+	default n
+	---help---
+	  Adapter
+
 config MSM_CAMERA_FLASH
 	bool "Qualcomm MSM camera flash support"
 	depends on MSM_CAMERA
