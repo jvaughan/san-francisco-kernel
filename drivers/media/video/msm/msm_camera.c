@@ -2574,4 +2574,68 @@ int msm_camera_drv_start(struct platform_device *dev,
 }
 EXPORT_SYMBOL(msm_camera_drv_start);
 
+#if defined(CONFIG_SENSOR_ADAPTER)
+DECLARE_MUTEX(msm_camera_sensor_dev_sem);
+int msm_camera_dev_start(struct platform_device *dev,
+                                 int (*i2c_dev_probe_on)(void),
+                                 void (*i2c_dev_probe_off)(void),
+                                 int (*sensor_dev_probe)(const struct msm_camera_sensor_info *))
+{
+    int rc = 0;
+    struct msm_camera_sensor_info *sensor_info_ptr;
+    static uint32_t sensor_init_status = 0;
+
+    down(&msm_camera_sensor_dev_sem);
+    
+    if(0 == sensor_init_status)
+    {
+        rc = i2c_dev_probe_on();
+        if (rc < 0)
+        {
+            up(&msm_camera_sensor_dev_sem);
+            
+            return -EFAULT;
+        }
+
+        rc = msm_camio_probe_on(dev);
+        if (rc < 0)
+        {
+            goto dev_start_exit;
+        }
+
+        sensor_info_ptr = dev->dev.platform_data;
+        rc = sensor_dev_probe(sensor_info_ptr);
+        if (rc < 0)
+        {
+            msm_camio_probe_off(dev);
+
+            goto dev_start_exit;
+        }
+        else
+        {
+            sensor_init_status = 1;
+        }
+
+        rc = msm_camio_probe_off(dev);
+        if (rc < 0) 
+        {
+            goto dev_start_exit;
+        }
+    }
+    else
+    {
+        rc = -EFAULT;
+    }
+
+    up(&msm_camera_sensor_dev_sem);
+
+    return rc;
+
+dev_start_exit:
+    i2c_dev_probe_off();
+    up(&msm_camera_sensor_dev_sem);
+    return rc;
+}
+EXPORT_SYMBOL(msm_camera_dev_start);
+#endif
 

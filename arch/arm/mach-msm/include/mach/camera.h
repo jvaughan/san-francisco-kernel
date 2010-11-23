@@ -170,6 +170,7 @@ struct msm_sync {
 	struct msm_camera_sensor_info *sdata;
 	struct msm_camvfe_fn vfefn;
 	struct msm_sensor_ctrl sctrl;
+	struct wake_lock wake_suspend_lock;
 	struct wake_lock wake_lock;
 	struct platform_device *pdev;
 	uint8_t opencnt;
@@ -273,7 +274,10 @@ int msm_camera_drv_start(struct platform_device *dev,
 
 #if defined(CONFIG_SENSOR_ADAPTER)
 int msm_camera_dev_start(struct platform_device *dev,
+                                 int (*i2c_dev_probe_on)(void),
+                                 void (*i2c_dev_probe_off)(void),
                                  int (*sensor_dev_probe)(const struct msm_camera_sensor_info *));
+#endif
 #endif
 
 enum msm_camio_clk_type {
