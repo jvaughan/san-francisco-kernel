@@ -9,10 +9,23 @@
 #include <mach/gpio.h>
 #include "mt9t11x.h"
 
+#define MT9T11X_SENSOR_PROBE_INIT
 
+#ifdef MT9T11X_SENSOR_PROBE_INIT
+#define MT9T11X_PROBE_WORKQUEUE
+#endif /* define MT9T11X_SENSOR_PROBE_INIT */
+#if defined(MT9T11X_PROBE_WORKQUEUE)
+#include <linux/workqueue.h>
+static struct platform_device *pdev_wq = NULL;
+static struct workqueue_struct *mt9t11x_wq = NULL;
+static void mt9t11x_workqueue(struct work_struct *work);
+static DECLARE_WORK(mt9t11x_cb_work, mt9t11x_workqueue);
+#endif /* defined(MT9T11X_PROBE_WORKQUEUE) */
 #define MT9T11X_CAMIO_MCLK  54000000
 
+#define MT9T11X_I2C_BOARD_NAME "mt9t11x"
 
+#define MT9T11X_I2C_BUS_ID  (0)
 #define MT9T11X_SLAVE_WR_ADDR 0x7A 
 #define MT9T11X_SLAVE_RD_ADDR 0x7B 
 
@@ -21,22 +34,12 @@
 #define MT9T112_MODEL_ID        0x2682
 
 #define REG_MT9T11X_RESET_AND_MISC_CTRL 0x001A
-#define MT9T11X_SOC_RESET               0x0219  /* SOC is in soft reset */
-#define MT9T11X_SOC_NOT_RESET           0x0218  /* SOC is not in soft reset */
+#define MT9T11X_SOC_RESET               0x0219
+#define MT9T11X_SOC_NOT_RESET           0x0218
 #define MT9T11X_SOC_RESET_DELAY_MSECS   10
 
 #define REG_MT9T11X_STANDBY_CONTROL     0x0018
-#define MT9T11X_SOC_STANDBY             0x402C  /* SOC is in standby state */
-
-
-#if defined(CONFIG_MACH_RAISE)
-#define MT9T11X_GPIO_SWITCH_CTL     39
-#define MT9T11X_GPIO_SWITCH_VAL     1
-#else
-#undef MT9T11X_GPIO_SWITCH_CTL
-#undef MT9T11X_GPIO_SWITCH_VAL
-#endif
-
+#define MT9T11X_SOC_STANDBY             0x402C
 
 struct mt9t11x_work_t {
     struct work_struct work;
@@ -56,9 +59,18 @@ static struct mt9t11x_reg_t *mt9t11x_regs = NULL;
 static DECLARE_WAIT_QUEUE_HEAD(mt9t11x_wait_queue);
 DECLARE_MUTEX(mt9t11x_sem);
 
+static struct wake_lock mt9t11x_wake_lock;
+
 static int mt9t11x_sensor_init(const struct msm_camera_sensor_info *data);
 static int mt9t11x_sensor_config(void __user *argp);
 static int mt9t11x_sensor_release(void);
+static int mt9t11x_sensor_release_internal(void);
+static int32_t mt9t11x_i2c_add_driver(void);
+static void mt9t11x_i2c_del_driver(void);
+static int32_t mt9t11x_i2c_read(unsigned short saddr, unsigned short raddr,
+                                     unsigned short *rdata, enum mt9t11x_width_t width);
+static int32_t mt9t11x_i2c_write(unsigned short saddr, unsigned short waddr,
+                                      unsigned short wdata, enum mt9t11x_width_t width);
 
 extern int32_t msm_camera_power_backend(enum msm_camera_pwr_mode_t pwr_mode);
 extern int msm_camera_clk_switch(const struct msm_camera_sensor_info *data,
@@ -70,6 +82,30 @@ extern int msm_camera_clk_switch(const struct msm_camera_sensor_info *data,
 extern int zte_get_ftm_flag(void);
 #endif
 #endif
+
+static inline void mt9t11x_init_suspend(void)
+{
+    CDBG("%s: entry\n", __func__);
+    wake_lock_init(&mt9t11x_wake_lock, WAKE_LOCK_IDLE, "mt9t11x");
+}
+
+static inline void mt9t11x_deinit_suspend(void)
+{
+    CDBG("%s: entry\n", __func__);
+    wake_lock_destroy(&mt9t11x_wake_lock);
+}
+
+static inline void mt9t11x_prevent_suspend(void)
+{
+    CDBG("%s: entry\n", __func__);
+    wake_lock(&mt9t11x_wake_lock);
+}
+
+static inline void mt9t11x_allow_suspend(void)
+{
+    CDBG("%s: entry\n", __func__);
+    wake_unlock(&mt9t11x_wake_lock);
+}
 
 static int mt9t11x_hard_standby(const struct msm_camera_sensor_info *dev, uint32_t on)
 {
@@ -193,6 +229,30 @@ static int32_t mt9t11x_i2c_write_table(struct mt9t11x_i2c_reg_conf const *reg_co
     uint32_t i;
     int32_t rc = 0;
 
+#ifdef MT9T11X_SENSOR_PROBE_INIT
+    for (i = 0; i < len; i++)
+    {
+        rc = mt9t11x_i2c_write(mt9t11x_client->addr,
+                               reg_conf_tbl[i].waddr,
+                               reg_conf_tbl[i].wdata,
+                               reg_conf_tbl[i].width);
+        if (rc < 0)
+        {
+            break;
+        }
+
+        if (reg_conf_tbl[i].mdelay_time != 0)
+        {
+            mdelay(reg_conf_tbl[i].mdelay_time);
+        }
+
+
+        if (0x00 == (!(i | 0xFFFFFFE0) && 0x0F))
+        {
+            mdelay(1);
+        }
+    }
+#else
     if(reg_conf_tbl == mt9t11x_regs->prevsnap_tbl)
     {
         for (i = 0; i < len; i++)
@@ -236,6 +296,7 @@ static int32_t mt9t11x_i2c_write_table(struct mt9t11x_i2c_reg_conf const *reg_co
             }
         }
     }
+#endif
 
     return rc;
 }
@@ -1128,14 +1189,47 @@ static long mt9t11x_reg_init(void)
 
     CDBG("%s: entry\n", __func__);
 
-    /* PLL Setup */
+#if defined(CONFIG_SENSOR_ADAPTER)
+    rc = mt9t11x_i2c_write(mt9t11x_client->addr, 
+                           REG_MT9T11X_RESET_AND_MISC_CTRL, 
+                           MT9T11X_SOC_RESET,
+                           WORD_LEN);
+    if (rc < 0)
+    {
+        return rc;
+    }
+
+    mdelay(1);
+    rc = mt9t11x_i2c_write(mt9t11x_client->addr,
+                           REG_MT9T11X_RESET_AND_MISC_CTRL,
+                           MT9T11X_SOC_NOT_RESET & 0x0018,
+                           WORD_LEN);
+    if (rc < 0)
+    {
+        return rc;
+    }
+    rc = mt9t11x_i2c_write(mt9t11x_client->addr,
+                           REG_MT9T11X_RESET_AND_MISC_CTRL,
+                           MT9T11X_SOC_NOT_RESET,
+                           WORD_LEN);
+    if (rc < 0)
+    {
+        return rc;
+    }
+
+    mdelay(MT9T11X_SOC_RESET_DELAY_MSECS);
+#else
+    // Do nothing
+#endif
+
+    
     rc = mt9t11x_i2c_write_table(mt9t11x_regs->pll_tbl, mt9t11x_regs->pll_tbl_sz);
     if (rc < 0)
     {
         return rc;
     }
 
-    /* Clock Setup */
+    
     rc = mt9t11x_i2c_write_table(mt9t11x_regs->clk_tbl, mt9t11x_regs->clk_tbl_sz);
     if (rc < 0)
     {
@@ -1153,7 +1247,7 @@ static long mt9t11x_reg_init(void)
     }
     msleep(10);
 
-    /* Preview & Snapshot Setup */
+    
     rc = mt9t11x_i2c_write_table(mt9t11x_regs->prevsnap_tbl, mt9t11x_regs->prevsnap_tbl_sz);
     if (rc < 0)
     {
@@ -1162,6 +1256,17 @@ static long mt9t11x_reg_init(void)
 
 
     mt9t11x_set_lensshading(1);
+
+#if defined(CONFIG_SENSOR_ADAPTER)
+    rc = mt9t11x_i2c_write(mt9t11x_client->addr, REG_MT9T11X_STANDBY_CONTROL, 0x0028, WORD_LEN);
+    if (rc < 0)
+    {
+        return rc;
+    }
+    mdelay(100);
+#else
+    // Do nothing
+#endif
 
     return 0;
 }
@@ -1614,6 +1719,7 @@ static int mt9t11x_power_shutdown(uint32_t on)
 }
 #endif
 
+#if !defined(CONFIG_SENSOR_ADAPTER)
 static int mt9t11x_sensor_init_probe(const struct msm_camera_sensor_info *data)
 {
     uint32_t switch_on;
@@ -1654,6 +1760,10 @@ static int mt9t11x_sensor_init_probe(const struct msm_camera_sensor_info *data)
     }
 
     CDBG("%s: model_id = 0x%x\n", __func__, model_id);
+#ifdef CONFIG_SENSOR_INFO
+	msm_sensorinfo_set_sensor_id(model_id);
+#else
+#endif
 
     if (model_id == MT9T112_MODEL_ID)
     {
@@ -1727,7 +1837,109 @@ init_probe_fail:
     CCRT("%s: rc = %d, failed!\n", __func__, rc);
     return rc;
 }
+#else
+static int mt9t11x_sensor_i2c_probe_on(void)
+{
+    int rc;
+    struct i2c_board_info info;
+    struct i2c_adapter *adapter;
+    struct i2c_client *client;
 
+    rc = mt9t11x_i2c_add_driver();
+    if (rc < 0)
+    {
+        CCRT("%s: add i2c driver failed!\n", __func__);
+        return rc;
+    }
+
+    memset(&info, 0, sizeof(struct i2c_board_info));
+    info.addr = MT9T11X_SLAVE_WR_ADDR >> 1;
+    strlcpy(info.type, MT9T11X_I2C_BOARD_NAME, I2C_NAME_SIZE);
+
+    adapter = i2c_get_adapter(MT9T11X_I2C_BUS_ID);
+    if (!adapter)
+    {
+        CCRT("%s: get i2c adapter failed!\n", __func__);
+        goto i2c_probe_failed;
+    }
+
+    client = i2c_new_device(adapter, &info);
+    i2c_put_adapter(adapter);
+    if (!client)
+    {
+        CCRT("%s: add i2c device failed!\n", __func__);
+        goto i2c_probe_failed;
+    }
+
+    mt9t11x_client = client;
+
+    return 0;
+
+i2c_probe_failed:
+    mt9t11x_i2c_del_driver();
+    return -ENODEV;
+}
+
+static void mt9t11x_sensor_i2c_probe_off(void)
+{
+    i2c_unregister_device(mt9t11x_client);
+    mt9t11x_i2c_del_driver();
+}
+
+static int mt9t11x_sensor_dev_probe(const struct msm_camera_sensor_info *pinfo)
+{
+    int rc;
+
+    rc = msm_camera_power_backend(MSM_CAMERA_PWRUP_MODE);
+    if (rc < 0)
+    {
+        CCRT("%s: camera_power_backend failed!\n", __func__);
+        return rc;
+    }
+
+    msm_camio_clk_rate_set(MT9T11X_CAMIO_MCLK);
+    mdelay(5);
+
+    rc = mt9t11x_hard_standby(pinfo, 0);
+    if (rc < 0)
+    {
+        CCRT("set standby failed!\n");
+        return rc;
+    }
+
+    rc = mt9t11x_hard_reset(pinfo);
+    if (rc < 0)
+    {
+        CCRT("hard reset failed!\n");
+        return rc;
+    }
+
+    model_id = 0x0000;
+    rc = mt9t11x_i2c_read(mt9t11x_client->addr, REG_MT9T11X_MODEL_ID, &model_id, WORD_LEN);
+    if (rc < 0)
+    {
+        return rc;
+    }
+
+    CDBG("%s: model_id = 0x%x\n", __func__, model_id);
+
+    if (model_id == MT9T112_MODEL_ID)
+    {
+        mt9t11x_regs = &mt9t112_regs;;
+    }
+    else if (model_id == MT9T111_MODEL_ID)
+    {
+        mt9t11x_regs = &mt9t111_regs;
+    }
+    else
+    {
+        mt9t11x_regs = NULL;
+        return -EFAULT;
+    }
+
+    return 0;
+}
+#endif
 
 static int mt9t11x_sensor_probe_init(const struct msm_camera_sensor_info *data)
 {
@@ -1752,6 +1964,7 @@ static int mt9t11x_sensor_probe_init(const struct msm_camera_sensor_info *data)
 
     mt9t11x_ctrl->sensordata = data;
 
+#if !defined(CONFIG_SENSOR_ADAPTER)
 
     rc = msm_camera_power_backend(MSM_CAMERA_PWRUP_MODE);
     if (rc < 0)
@@ -1759,17 +1972,6 @@ static int mt9t11x_sensor_probe_init(const struct msm_camera_sensor_info *data)
         CCRT("%s: camera_power_backend failed!\n", __func__);
         goto probe_init_fail;
     }
-
-
-#if defined(CONFIG_MACH_RAISE)
-    rc = msm_camera_clk_switch(mt9t11x_ctrl->sensordata, MT9T11X_GPIO_SWITCH_CTL, MT9T11X_GPIO_SWITCH_VAL);
-    if (rc < 0)
-    {
-        CCRT("%s: camera_clk_switch failed!\n", __func__);
-        goto probe_init_fail;
-    }
-#else
-#endif
 
     msm_camio_clk_rate_set(MT9T11X_CAMIO_MCLK);
     mdelay(5);
@@ -1780,6 +1982,21 @@ static int mt9t11x_sensor_probe_init(const struct msm_camera_sensor_info *data)
         CCRT("%s: sensor_init_probe failed!\n", __func__);
         goto probe_init_fail;
     }
+#else
+    rc = mt9t11x_sensor_dev_probe(mt9t11x_ctrl->sensordata);
+    if (rc < 0)
+    {
+        CCRT("%s: mt9t11x_sensor_dev_probe failed!\n", __func__);
+        goto probe_init_fail;
+    }
+
+    rc = mt9t11x_reg_init();
+    if (rc < 0)
+    {
+        CCRT("%s: mt9t11x_reg_init failed!\n", __func__);
+        goto probe_init_fail;
+    }
+#endif
 
     return 0;
 
@@ -1793,6 +2010,61 @@ probe_init_fail:
     return rc;
 }
 
+#ifdef MT9T11X_SENSOR_PROBE_INIT
+static int mt9t11x_sensor_init(const struct msm_camera_sensor_info *data)
+{
+    uint32_t switch_on; 
+    int rc;
+
+    CDBG("%s: entry\n", __func__);
+
+    if ((NULL == data)
+        || strcmp(data->sensor_name, "mt9t11x")
+        || strcmp(mt9t11x_ctrl->sensordata->sensor_name, "mt9t11x"))
+    {
+        CCRT("%s: data is NULL, or sensor_name is not equal to mt9t11x!\n", __func__);
+        rc = -ENODEV;
+        goto sensor_init_fail;
+    }
+    
+    if (model_id == MT9T112_MODEL_ID)
+    {
+        rc = msm_camera_power_backend(MSM_CAMERA_NORMAL_MODE);
+        if (rc < 0)
+        {
+            CCRT("%s: camera_power_backend failed!\n", __func__);
+            goto sensor_init_fail;
+        }
+    }
+    else if (model_id == MT9T111_MODEL_ID)
+    {    
+    }
+    else
+    {
+    }
+
+    msm_camio_clk_rate_set(MT9T11X_CAMIO_MCLK);
+    mdelay(5);
+
+    msm_camio_camif_pad_reg_reset();
+    
+    mdelay(10);
+
+    switch_on = 0;
+    rc = mt9t11x_hard_standby(mt9t11x_ctrl->sensordata, switch_on);
+    if (rc < 0)
+    {
+        CCRT("set standby failed!\n");
+        goto sensor_init_fail;
+    }
+    mdelay(10);
+
+    return 0;
+
+sensor_init_fail:
+    return rc;
+}
+#else
 static int mt9t11x_sensor_init(const struct msm_camera_sensor_info *data)
 {
     int rc;
@@ -1801,12 +2073,7 @@ static int mt9t11x_sensor_init(const struct msm_camera_sensor_info *data)
 
     return rc;
 }
-
-static int mt9t11x_init_client(struct i2c_client *client)
-{
-    init_waitqueue_head(&mt9t11x_wait_queue);
-    return 0;
-}
+#endif /* define MT9T11X_SENSOR_PROBE_INIT */
 
 static int mt9t11x_sensor_config(void __user *argp)
 {
@@ -1914,23 +2181,95 @@ static int mt9t11x_sensor_config(void __user *argp)
         break;
     }
 
+    mt9t11x_prevent_suspend();
 
     return rc;
 }
 
+#ifdef MT9T11X_SENSOR_PROBE_INIT
+static int mt9t11x_sensor_release_internal(void)
+{
+    int rc;
+    uint32_t switch_on;
 
-static int mt9t11x_sensor_release(void)
+    CDBG("%s: entry\n", __func__);
+
+    if (model_id == MT9T111_MODEL_ID)
+    {    
+        rc = mt9t11x_i2c_write(mt9t11x_client->addr, 0x0604, 0x0F00, WORD_LEN);    
+        if (rc < 0)    
+        {        
+            return rc;    
+        }    
+        rc = mt9t11x_i2c_write(mt9t11x_client->addr, 0x0606, 0x0F00, WORD_LEN);    
+        if (rc < 0)    
+        {        
+            return rc;    
+        }
+    }
+    else if (model_id == MT9T112_MODEL_ID)
+    {
+    }
+    else
+    {
+    }
+    rc = mt9t11x_i2c_write(mt9t11x_client->addr, 0x0028, 0x0000, WORD_LEN);
+    if (rc < 0)
+    {
+        return rc;
+    }
+    mdelay(1);
+
+    switch_on = 1;
+    rc = mt9t11x_hard_standby(mt9t11x_ctrl->sensordata, switch_on);
+    if (rc < 0)
+    {
+        return rc;
+    }
+    mdelay(200);
+
+    if (model_id == MT9T112_MODEL_ID)
+    {
+        rc = msm_camera_power_backend(MSM_CAMERA_STANDBY_MODE);
+        if (rc < 0)
+        {
+            return rc;
+        }
+    }
+    else if (model_id == MT9T111_MODEL_ID)
+    {
+    }
+    else
+    {
+    }
+
+    /* up(&mt9t11x_sem); */
+
+    return 0;
+}
+#else
+static int mt9t11x_sensor_release_internal(void)
 {
     int rc;
 
-    
     rc = msm_camera_power_backend(MSM_CAMERA_PWRDWN_MODE);
 
     kfree(mt9t11x_ctrl);
 
     return rc;
 }
+#endif /* mt9t11x_sensor_release_internal */
 
+static int mt9t11x_sensor_release(void)
+{
+    int rc;
+
+    rc = mt9t11x_sensor_release_internal();
+
+    mt9t11x_allow_suspend();
+
+    return rc;
+}
 
 static int mt9t11x_i2c_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
@@ -1952,7 +2291,7 @@ static int mt9t11x_i2c_probe(struct i2c_client *client, const struct i2c_device_
     }
 
     i2c_set_clientdata(client, mt9t11x_sensorw);
-    mt9t11x_init_client(client);
+
     mt9t11x_client = client;
 
     return 0;
@@ -1973,6 +2312,7 @@ static int __exit mt9t11x_i2c_remove(struct i2c_client *client)
     free_irq(client->irq, sensorw);   
     kfree(sensorw);
 
+    mt9t11x_deinit_suspend();
     mt9t11x_client = NULL;
     mt9t11x_sensorw = NULL;
 
@@ -2010,10 +2350,14 @@ init_failure:
     return rc;
 }
 
+static void mt9t11x_i2c_del_driver(void)
+{
+    i2c_del_driver(&mt9t11x_driver);
+}
 void mt9t11x_exit(void)
 {
     CDBG("%s: entry\n", __func__);
-    i2c_del_driver(&mt9t11x_driver);
+    mt9t11x_i2c_del_driver();
 }
 
 int mt9t11x_sensor_probe(const struct msm_camera_sensor_info *info,
@@ -2023,13 +2367,32 @@ int mt9t11x_sensor_probe(const struct msm_camera_sensor_info *info,
 
     CDBG("%s: entry\n", __func__);
 
+#if !defined(CONFIG_SENSOR_ADAPTER)
     rc = mt9t11x_i2c_add_driver();
     if (rc < 0)
     {
         goto probe_failed;
     }
+#else
+#endif
 
+#ifdef MT9T11X_SENSOR_PROBE_INIT
+    rc = mt9t11x_sensor_probe_init(info);
+    if (rc < 0)
+    {
+        CCRT("%s: mt9t11x_sensor_probe_init failed!\n", __func__);
+        goto probe_failed;
+    }
 
+    rc = mt9t11x_sensor_release_internal();
+    if (rc < 0)
+    {
+        CCRT("%s: mt9t11x_sensor_release failed!\n", __func__);
+        goto probe_failed;
+    }
+#endif /* define MT9T11X_SENSOR_PROBE_INIT */
+
+    mt9t11x_init_suspend();
 
     s->s_init       = mt9t11x_sensor_init;
     s->s_config     = mt9t11x_sensor_config;
@@ -2039,25 +2402,91 @@ int mt9t11x_sensor_probe(const struct msm_camera_sensor_info *info,
 
 probe_failed:
     CCRT("%s: rc = %d, failed!\n", __func__, rc);
+#if !defined(CONFIG_SENSOR_ADAPTER)
+    mt9t11x_i2c_del_driver();
+#else
+#endif
     return rc;
 }
 
+#if defined(MT9T11X_PROBE_WORKQUEUE)
+
+static void mt9t11x_workqueue(struct work_struct *work)
+{
+    int32_t rc;
+
+    if (!pdev_wq)
+    {
+        CCRT("%s: pdev_wq is NULL!\n", __func__);
+        return;
+    }
+
+#if !defined(CONFIG_SENSOR_ADAPTER)
+    rc = msm_camera_drv_start(pdev_wq, mt9t11x_sensor_probe);
+#else
+    rc = msm_camera_dev_start(pdev_wq,
+                              mt9t11x_sensor_i2c_probe_on,
+                              mt9t11x_sensor_i2c_probe_off,
+                              mt9t11x_sensor_dev_probe);
+    if (rc < 0)
+    {
+        CCRT("%s: msm_camera_dev_start failed!\n", __func__);
+        goto probe_failed;
+    }
+
+    rc = msm_camera_power_backend(MSM_CAMERA_PWRDWN_MODE);
+    if (rc < 0)
+    {
+        CCRT("%s: camera_power_backend power down failed!\n", __func__);
+    }
+
+    rc = msm_camera_drv_start(pdev_wq, mt9t11x_sensor_probe);
+    if (rc < 0)
+    {
+        goto probe_failed;
+    }
+
+    return;
+
+probe_failed:
+    CCRT("%s: rc = %d, failed!\n", __func__, rc);
+    return;
+#endif
+}
+
+static int32_t mt9t11x_probe_workqueue(void)
+{
+    int32_t rc;
+
+    mt9t11x_wq = create_singlethread_workqueue("mt9t11x_wq");
+
+    if (!mt9t11x_wq)
+    {
+        CCRT("%s: mt9t11x_wq is NULL!\n", __func__);
+        return -EFAULT;
+    }
+
+    rc = queue_work(mt9t11x_wq, &mt9t11x_cb_work);
+
+    return 0;
+}
 
 static int __mt9t11x_probe(struct platform_device *pdev)
 {
+    int32_t rc;
 
-#ifdef CONFIG_ZTE_PLATFORM
-#ifdef CONFIG_ZTE_FTM_FLAG_SUPPORT
-    if(zte_get_ftm_flag())
-    {
-        return 0;
-    }
-#endif
-#endif
+    pdev_wq = pdev;
 
-	return msm_camera_drv_start(pdev, mt9t11x_sensor_probe);
+    rc = mt9t11x_probe_workqueue();
+
+    return rc;
 }
-
+#else
+static int __mt9t11x_probe(struct platform_device *pdev)
+{
+    return msm_camera_drv_start(pdev, mt9t11x_sensor_probe);
+}
+#endif /* defined(MT9T11X_PROBE_WORKQUEUE) */
 
 static struct platform_driver msm_camera_driver = {
 	.probe = __mt9t11x_probe,
