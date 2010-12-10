@@ -49,7 +49,7 @@ static int rocker_delta_y = 0;
 #else
 #define Step_Thresh_sum  (20)
 #define Step_Thresh_X  (1) 
-#define Step_Thresh_Y  (1) )
+#define Step_Thresh_Y  (1)
 #endif
 
 
@@ -1511,6 +1511,7 @@ static int ofn_input_dev_open(struct input_dev *dev)
 	}
 	rc = request_irq(GPIO_OFN_MOTION_INT, &ofn_interrupt,
 		                   IRQF_TRIGGER_FALLING, "ofn", 0); 
+	if (rc) {
 		goto dev_open_exit;
 	}
 #endif
@@ -1525,7 +1526,7 @@ static int ofn_input_dev_open(struct input_dev *dev)
     if (rc)
 	goto ofn_config_fail;
 
-   
+#endif
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 

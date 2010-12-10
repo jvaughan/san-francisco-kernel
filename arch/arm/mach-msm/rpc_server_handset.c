@@ -27,6 +27,13 @@
 #include <mach/board.h>
 #include <mach/rpc_server_handset.h>
 
+#if defined(CONFIG_MACH_R750) /* ZTE_HS_CHYL_01 start*/
+#include <mach/gpio.h>
+#endif /* ZTE_HS_CHYL_01 end*/
+
+#ifdef CONFIG_SCREEN_ON_WITHOUT_KEYOCDE
+extern void msm_batt_force_update(void);
+#endif
 #define DRIVER_NAME	"msm-handset"
 
 #define HS_SERVER_PROG 0x30000062
@@ -51,6 +58,9 @@
 #define HS_STEREO_HEADSET_K	0x82
 #define HS_HEADSET_SWITCH_K	0x84
 #define HS_REL_K		0xFF	/* key release */
+#define HS_EXT_PWR_ON_K         0x78    /* External power was turned on        0x78    */
+#define HS_EXT_PWR_OFF_K        0x79    /* External power was turned off       0x79    */
+//zhengchao add end
 
 #define KEY(hs_key, input_key) ((hs_key << 24) | input_key)
 
@@ -151,9 +161,11 @@ struct hs_event_cb_recv {
 
 static const uint32_t hs_key_map[] = {
 	KEY(HS_PWR_K, KEY_POWER),
-	KEY(HS_END_K, KEY_END),
+	KEY(HS_END_K, KEY_SLEEP),//ZTE_KEYMAP_ZX_001 KEY_END-->KEY_SLEEP 142 200911178
 	KEY(HS_STEREO_HEADSET_K, SW_HEADPHONE_INSERT),
 	KEY(HS_HEADSET_SWITCH_K, KEY_MEDIA),
+	KEY(HS_EXT_PWR_ON_K,KEY_WAKEUP),//ZTE_HS_ZHENGCHAO_01
+        KEY(HS_EXT_PWR_OFF_K,KEY_WAKEUP),//ZTE_HS_ZHENGCHAO_01
 	0
 };
 
@@ -219,9 +231,18 @@ static void report_hs_key(uint32_t key_code, uint32_t key_parm)
 
 	switch (key) {
 	case KEY_POWER:
-	case KEY_END:
+	case KEY_SLEEP://ZTE_KEYMAP_ZX_001 KEY_END-->KEY_SLEEP 142 200911178
 	case KEY_MEDIA:
+		printk(KERN_ERR "--keycode from A9\n \tkey:%d keycode:%d\n",key,key_code);
 		input_report_key(hs->ipdev, key, (key_code != HS_REL_K));
+		break;
+	case KEY_WAKEUP://ZTE_HS_ZHENGCHAO_01
+		printk(KERN_ERR "--keycode from A9(charger)\n \tkey:%d keycode:%d\n",key,key_code);
+#ifdef CONFIG_SCREEN_ON_WITHOUT_KEYOCDE
+    		msm_batt_force_update();
+#else
+		input_report_key(hs->ipdev, key, (key_code != HS_REL_K));
+#endif
 		break;
 	case SW_HEADPHONE_INSERT:
 		report_headset_switch(hs->ipdev, key, (key_code != HS_REL_K));
@@ -513,11 +534,12 @@ static int __devinit hs_probe(struct platform_device *pdev)
 	ipdev->id.product	= 1;
 	ipdev->id.version	= 1;
 
+	input_set_capability(ipdev, EV_KEY, KEY_WAKEUP);//ZTE_HS_ZHENGCHAO_01
 	input_set_capability(ipdev, EV_KEY, KEY_MEDIA);
 	input_set_capability(ipdev, EV_SW, SW_HEADPHONE_INSERT);
 	input_set_capability(ipdev, EV_KEY, KEY_POWER);
-	input_set_capability(ipdev, EV_KEY, KEY_END);
-
+	//input_set_capability(ipdev, EV_KEY, KEY_END);
+	input_set_capability(ipdev, EV_KEY, KEY_SLEEP);
 	rc = input_register_device(ipdev);
 	if (rc) {
 		dev_err(&ipdev->dev,
