@@ -1,20 +1,3 @@
-/* drivers/i2c/busses/i2c-msm.c
- *
- * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
-
-/* #define DEBUG */
 
 #include <linux/clk.h>
 #include <linux/err.h>
@@ -32,6 +15,7 @@
 #include <linux/pm_qos_params.h>
 #include <mach/gpio.h>
 
+#define DEBUG 0
 
 enum {
 	I2C_WRITE_DATA          = 0x00,
@@ -84,6 +68,7 @@ struct msm_i2c_dev {
 	int                          rd_acked;
 	int                          one_bit_t;
 	remote_mutex_t               r_lock;
+	remote_spinlock_t            s_lock;
 	int                          suspended;
 	struct mutex                 mlock;
 	struct msm_i2c_platform_data *pdata;
@@ -111,7 +96,7 @@ msm_i2c_pwr_timer(unsigned long data)
 		msm_i2c_pwr_mgmt(dev, 0);
 }
 
-#ifdef DEBUG
+#if DEBUG
 static void
 dump_status(uint32_t status)
 {
@@ -145,7 +130,7 @@ msm_i2c_interrupt(int irq, void *devid)
 	uint32_t status = readl(dev->base + I2C_STATUS);
 	int err = 0;
 
-#ifdef DEBUG
+#if DEBUG
 	dump_status(status);
 #endif
 
@@ -164,20 +149,9 @@ msm_i2c_interrupt(int irq, void *devid)
 	if (dev->msg->flags & I2C_M_RD) {
 		if (status & I2C_STATUS_RD_BUFFER_FULL) {
 
-			/*
-			 * Theres something in the FIFO.
-			 * Are we expecting data or flush crap?
-			 */
 			if (dev->cnt) { /* DATA */
 				uint8_t *data = &dev->msg->buf[dev->pos];
 
-				/* This is in spin-lock. So there will be no
-				 * scheduling between reading the second-last
-				 * byte and writing LAST_BYTE to the controller.
-				 * So extra read-cycle-clock won't be generated
-				 * Per I2C MSM HW Specs: Write LAST_BYTE befure
-				 * reading 2nd last byte
-				 */
 				if (dev->cnt == 2)
 					writel(I2C_WRITE_DATA_LAST_BYTE,
 						dev->base + I2C_WRITE_DATA);
@@ -190,9 +164,6 @@ msm_i2c_interrupt(int irq, void *devid)
 					goto out_complete;
 
 			} else {
-				/* Now that extra read-cycle-clocks aren't
-				 * generated, this becomes error condition
-				 */
 				dev_err(dev->dev,
 					"read did not stop, status - %x\n",
 					status);
@@ -215,26 +186,11 @@ msm_i2c_interrupt(int irq, void *devid)
 		}
 
 		if (dev->cnt) {
-			/* Ready to take a byte */
 			data = dev->msg->buf[dev->pos];
 			if (dev->cnt == 1 && dev->rem == 1)
 				data |= I2C_WRITE_DATA_LAST_BYTE;
 
 			status = readl(dev->base + I2C_STATUS);
-			/*
-			 * Due to a hardware timing issue, data line setup time
-			 * may be reduced to less than recommended 250 ns.
-			 * This happens when next byte is written in a
-			 * particular window of clock line being low and master
-			 * not stretching the clock line. Due to setup time
-			 * violation, some slaves may miss first-bit of data, or
-			 * misinterprete data as start condition.
-			 * We introduce delay of just over 1/2 clock cycle to
-			 * ensure master stretches the clock line thereby
-			 * avoiding setup time violation. Delay is introduced
-			 * only if I2C clock FSM is LOW. The delay is not needed
-			 * if I2C clock FSM is HIGH or FORCED_LOW.
-			 */
 			if ((status & I2C_STATUS_LOW_CLK_STATE) ==
 					I2C_STATUS_LOW_CLK_STATE)
 				udelay((dev->one_bit_t >> 1) + 1);
@@ -301,7 +257,6 @@ msm_i2c_recover_bus_busy(struct msm_i2c_dev *dev, struct i2c_adapter *adap)
 		return 0;
 
 	dev->pdata->msm_i2c_config_gpio(adap->nr, 0);
-	/* Even adapter is primary and Odd adapter is AUX */
 	if (adap->nr % 2) {
 		gpio_clk = dev->pdata->aux_clk;
 		gpio_dat = dev->pdata->aux_dat;
@@ -358,6 +313,32 @@ msm_i2c_recover_bus_busy(struct msm_i2c_dev *dev, struct i2c_adapter *adap)
 	return -EBUSY;
 }
 
+static void
+msm_i2c_rspin_lock(struct msm_i2c_dev *dev)
+{
+	int gotlock = 0;
+	unsigned long flags;
+	uint32_t *smem_ptr = (uint32_t *)dev->pdata->rmutex;
+	do {
+		remote_spin_lock_irqsave(&dev->s_lock, flags);
+		if (*smem_ptr == 0) {
+			*smem_ptr = 1;
+			gotlock = 1;
+		}
+		remote_spin_unlock_irqrestore(&dev->s_lock, flags);
+	} while (!gotlock);
+}
+
+static void
+msm_i2c_rspin_unlock(struct msm_i2c_dev *dev)
+{
+	unsigned long flags;
+	uint32_t *smem_ptr = (uint32_t *)dev->pdata->rmutex;
+	remote_spin_lock_irqsave(&dev->s_lock, flags);
+	*smem_ptr = 0;
+	remote_spin_unlock_irqrestore(&dev->s_lock, flags);
+}
+
 static int
 msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 {
@@ -381,15 +362,13 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 		dev_dbg(dev->dev, "I2C_Power: Enable I2C clock(s)\n");
 		msm_i2c_pwr_mgmt(dev, 1);
 	}
-
-	/* Don't allow power collapse until we release remote spinlock */
 	pm_qos_update_requirement(PM_QOS_CPU_DMA_LATENCY, "msm_i2c",
 					dev->pdata->pm_lat);
 	if (dev->pdata->rmutex) {
-		remote_mutex_lock(&dev->r_lock);
-		/* If other processor did some transactions, we may have
-		 * interrupt pending. Clear it
-		 */
+		if (dev->pdata->rsl_id[0] == 'S')
+			msm_i2c_rspin_lock(dev);
+		else
+			remote_mutex_lock(&dev->r_lock);
 		get_irq_chip(dev->irq)->ack(dev->irq);
 	}
 
@@ -439,13 +418,6 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 				goto out_err;
 			}
 		}
-
-		/* special case for doing 1 byte read.
-		 * There should be no scheduling between I2C controller becoming
-		 * ready to read and writing LAST-BYTE to I2C controller
-		 * This will avoid potential of I2C controller starting to latch
-		 * another extra byte.
-		 */
 		if ((msgs->len == 1) && (msgs->flags & I2C_M_RD)) {
 			uint32_t retries = 0;
 			spin_lock_irqsave(&dev->lock, flags);
@@ -453,13 +425,6 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 			writel(I2C_WRITE_DATA_ADDR_BYTE | addr,
 				dev->base + I2C_WRITE_DATA);
 
-			/* Poll for I2C controller going into RX_DATA mode to
-			 * ensure controller goes into receive mode.
-			 * Just checking write_buffer_full may not work since
-			 * there is delay between the write-buffer becoming
-			 * empty and the slave sending ACK to ensure I2C
-			 * controller goes in receive mode to receive data.
-			 */
 			while (retries != 2000) {
 				uint32_t status = readl(dev->base + I2C_STATUS);
 
@@ -471,9 +436,6 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 			if (retries >= 2000) {
 				dev->rd_acked = 0;
 				spin_unlock_irqrestore(&dev->lock, flags);
-				/* 1-byte-reads from slow devices in interrupt
-				 * context
-				 */
 				goto wait_for_int;
 			}
 
@@ -485,15 +447,7 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 			writel(I2C_WRITE_DATA_ADDR_BYTE | addr,
 					 dev->base + I2C_WRITE_DATA);
 		}
-		/* Polling and waiting for write_buffer_empty is not necessary.
-		 * Even worse, if we do, it can result in invalid status and
-		 * error if interrupt(s) occur while polling.
-		 */
 
-		/*
-		 * Now that we've setup the xfer, the ISR will transfer the data
-		 * and wake us up with dev->err set if there was an error
-		 */
 wait_for_int:
 
 		timeout = wait_for_completion_timeout(&complete, HZ);
@@ -535,8 +489,12 @@ wait_for_int:
 	dev->cnt = 0;
 	spin_unlock_irqrestore(&dev->lock, flags);
 	disable_irq(dev->irq);
-	if (dev->pdata->rmutex)
-		remote_mutex_unlock(&dev->r_lock);
+	if (dev->pdata->rmutex) {
+		if (dev->pdata->rsl_id[0] == 'S')
+			msm_i2c_rspin_unlock(dev);
+		else
+			remote_mutex_unlock(&dev->r_lock);
+	}
 	pm_qos_update_requirement(PM_QOS_CPU_DMA_LATENCY, "msm_i2c",
 					PM_QOS_DEFAULT_VALUE);
 	mod_timer(&dev->pwr_timer, (jiffies + 3*HZ));
@@ -601,12 +559,21 @@ msm_i2c_probe(struct platform_device *pdev)
 		ret = -ENOSYS;
 		goto err_clk_get_failed;
 	}
-	if (!pdata->msm_i2c_config_gpio) {
-		dev_err(&pdev->dev, "config_gpio function not initialized\n");
-		ret = -ENOSYS;
-		goto err_clk_get_failed;
+#ifdef CONFIG_ZTE_PLATFORM
+       //  if(machine_is_mooncake())
+       {
+        	printk(KERN_INFO" Warning: msm on-chip aux i2c bus disabled on Board mooncake!\n");
+       }
+#else
+	{
+		if (!pdata->msm_i2c_config_gpio) {
+		
+			dev_err(&pdev->dev, "config_gpio function not initialized\n");
+			ret = -ENOSYS;
+			goto err_clk_get_failed;
+		}
 	}
-	/* We support frequencies upto FAST Mode(400KHz) */
+#endif
 	if (pdata->clk_freq <= 0 || pdata->clk_freq > 400000) {
 		dev_err(&pdev->dev, "clock frequency not supported\n");
 		ret = -EIO;
@@ -635,16 +602,18 @@ msm_i2c_probe(struct platform_device *pdev)
 
 	clk_enable(clk);
 
-	if (pdata->rmutex) {
+	if (pdata->rmutex && pdata->rsl_id[0] == 'S') {
+		remote_spinlock_id_t rmid;
+		rmid = pdata->rsl_id;
+		if (remote_spin_lock_init(&dev->s_lock, rmid) != 0)
+			pdata->rmutex = 0;
+	} else if (pdata->rmutex) {
 		struct remote_mutex_id rmid;
 		rmid.r_spinlock_id = pdata->rsl_id;
 		rmid.delay_us = 10000000/pdata->clk_freq;
 		if (remote_mutex_init(&dev->r_lock, &rmid) != 0)
 			pdata->rmutex = 0;
 	}
-	/* I2C_HS_CLK = I2C_CLK/(3*(HS_DIVIDER_VALUE+1) */
-	/* I2C_FS_CLK = I2C_CLK/(2*(FS_DIVIDER_VALUE+3) */
-	/* FS_DIVIDER_VALUE = ((I2C_CLK / I2C_FS_CLK) / 2) - 3 */
 	i2c_clk = 19200000; /* input clock */
 	fs_div = ((i2c_clk / pdata->clk_freq) / 2) - 3;
 	hs_div = 3;
@@ -666,19 +635,27 @@ msm_i2c_probe(struct platform_device *pdev)
 		goto err_i2c_add_adapter_failed;
 	}
 
-	i2c_set_adapdata(&dev->adap_aux, dev);
-	dev->adap_aux.algo = &msm_i2c_algo;
-	strlcpy(dev->adap_aux.name,
-		"MSM I2C adapter-AUX",
-		sizeof(dev->adap_aux.name));
+#ifdef CONFIG_ZTE_PLATFORM
+      //  if(machine_is_mooncake())
+       {
+       }
+#else
+	{
+		i2c_set_adapdata(&dev->adap_aux, dev);
+		dev->adap_aux.algo = &msm_i2c_algo;
+		strlcpy(dev->adap_aux.name,
+			"MSM I2C adapter-AUX",
+			sizeof(dev->adap_aux.name));
 
-	dev->adap_aux.nr = pdev->id + 1;
-	ret = i2c_add_numbered_adapter(&dev->adap_aux);
-	if (ret) {
-		dev_err(&pdev->dev, "auxiliary i2c_add_adapter failed\n");
-		i2c_del_adapter(&dev->adap_pri);
-		goto err_i2c_add_adapter_failed;
+		dev->adap_aux.nr = pdev->id + 1;
+		ret = i2c_add_numbered_adapter(&dev->adap_aux);
+		if (ret) {
+			dev_err(&pdev->dev, "auxiliary i2c_add_adapter failed\n");
+			i2c_del_adapter(&dev->adap_pri);
+			goto err_i2c_add_adapter_failed;
+		}
 	}
+#endif
 	ret = request_irq(dev->irq, msm_i2c_interrupt,
 			IRQF_TRIGGER_RISING, pdev->name, dev);
 	if (ret) {
@@ -693,13 +670,22 @@ msm_i2c_probe(struct platform_device *pdev)
 	dev->clk_state = 0;
 	/* Config GPIOs for primary and secondary lines */
 	pdata->msm_i2c_config_gpio(dev->adap_pri.nr, 1);
+/*
 	pdata->msm_i2c_config_gpio(dev->adap_aux.nr, 1);
+*/
+#ifdef CONFIG_ZTE_PLATFORM
+
+       {
+       }
+#else
+	{
+		pdata->msm_i2c_config_gpio(dev->adap_aux.nr, 1);
+	}
+#endif
 	clk_disable(dev->clk);
 	setup_timer(&dev->pwr_timer, msm_i2c_pwr_timer, (unsigned long) dev);
 
 	return 0;
-
-/*	free_irq(dev->irq, dev); */
 err_request_irq_failed:
 	i2c_del_adapter(&dev->adap_pri);
 	i2c_del_adapter(&dev->adap_aux);
@@ -721,7 +707,6 @@ msm_i2c_remove(struct platform_device *pdev)
 	struct msm_i2c_dev	*dev = platform_get_drvdata(pdev);
 	struct resource		*mem;
 
-	/* Grab mutex to ensure ongoing transaction is over */
 	mutex_lock(&dev->mlock);
 	dev->suspended = 1;
 	mutex_unlock(&dev->mlock);
@@ -745,11 +730,7 @@ msm_i2c_remove(struct platform_device *pdev)
 static int msm_i2c_suspend(struct platform_device *pdev, pm_message_t state)
 {
 	struct msm_i2c_dev *dev = platform_get_drvdata(pdev);
-	/* Wait until current transaction finishes
-	 * Make sure remote lock is released before we suspend
-	 */
 	if (dev) {
-		/* Grab mutex to ensure ongoing transaction is over */
 		mutex_lock(&dev->mlock);
 		dev->suspended = 1;
 		mutex_unlock(&dev->mlock);
@@ -778,8 +759,6 @@ static struct platform_driver msm_i2c_driver = {
 		.owner	= THIS_MODULE,
 	},
 };
-
-/* I2C may be needed to bring up other drivers */
 static int __init
 msm_i2c_init_driver(void)
 {

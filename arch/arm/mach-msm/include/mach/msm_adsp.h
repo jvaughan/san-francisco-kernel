@@ -41,6 +41,8 @@ int msm_adsp_enable(struct msm_adsp_module *module);
 int msm_adsp_disable(struct msm_adsp_module *module);
 int adsp_set_clkrate(struct msm_adsp_module *module, unsigned long clk_rate);
 int msm_adsp_disable_event_rsp(struct msm_adsp_module *module);
+void resume_prevent_suspend(void);
+void suspend_allow_suspend(void);
 
 /* Write is safe to call from interrupt context.
  */

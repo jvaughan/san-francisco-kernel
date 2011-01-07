@@ -1,39 +1,7 @@
-/*
- * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2008-2010, Code Aurora Forum. All rights reserved.
- * Author: Brian Swetland <swetland@google.com>
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- *
- * The MSM peripherals are spread all over across 768MB of physical
- * space, which makes just having a simple IO_ADDRESS macro to slide
- * them into the right virtual location rough.  Instead, we will
- * provide a master phys->virt mapping for peripherals here.
- *
- */
 
 #ifndef __ASM_ARCH_MSM_IOMAP_7XXX_H
 #define __ASM_ARCH_MSM_IOMAP_7XXX_H
 
-/* Physical base address and size of peripherals.
- * Ordered by the virtual base addresses they will be mapped at.
- *
- * MSM_VIC_BASE must be an value that can be loaded via a "mov"
- * instruction, otherwise entry-macro.S will not compile.
- *
- * If you add or remove entries here, you'll want to edit the
- * msm_io_desc array in arch/arm/mach-msm/io.c to reflect your
- * changes.
- *
- */
 
 #define MSM_VIC_BASE          IOMEM(0xE0000000)
 #define MSM_VIC_PHYS          0xC0000000
@@ -70,6 +38,11 @@
 #define MSM_SHARED_RAM_BASE   IOMEM(0xE0100000)
 #define MSM_SHARED_RAM_SIZE   SZ_1M
 
+#if defined(CONFIG_ZTE_PLATFORM) && defined(CONFIG_F3_LOG)
+#define MSM_RAM_LOG_BASE      IOMEM(0xE0200000)
+#define MSM_RAM_LOG_SIZE   	  SZ_1M
+#endif
+
 #define MSM_UART1_PHYS        0xA9A00000
 #define MSM_UART1_SIZE        SZ_4K
 
@@ -98,5 +71,8 @@
 #define MSM_AD5_BASE          IOMEM(0xE0300000)
 #define MSM_AD5_PHYS          0xAC000000
 #define MSM_AD5_SIZE          (SZ_1M*13)
+
+#define MSM_SMEM_RAM_PHYS     0x00200000
+#define MSM_SMEM_RAM_SIZE     SZ_1M
 
 #endif

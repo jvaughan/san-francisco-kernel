@@ -1,21 +1,23 @@
-/* Copyright (c) 2008-2009, Code Aurora Forum. All rights reserved.
+/*
+ * drivers/media/video/msm/ov5642_reg_globaloptics.c
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * Refer to drivers/media/video/msm/mt9d112_reg.c
+ * For IC OV5642 of Module GLOBALOPTICS: 5.0Mp 1/4-Inch System-On-A-Chip (SOC) CMOS Digital Image Sensor
+ *
+ * Copyright (C) 2009-2010 ZTE Corporation.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
+ * 
  */
-
+ 
 #include <linux/delay.h>
 #include <linux/types.h>
 #include <linux/i2c.h>
@@ -27,9 +29,6 @@
 #include <mach/camera.h>
 #include "mt9p012.h"
 
-/*=============================================================
-    SENSOR REGISTER DEFINES
-==============================================================*/
 #define MT9P012_REG_MODEL_ID         0x0000
 #define MT9P012_MODEL_ID             0x2801
 #define REG_GROUPED_PARAMETER_HOLD   0x0104
@@ -76,13 +75,9 @@ enum mt9p012_resolution {
 };
 
 enum mt9p012_reg_update {
-	/* Sensor egisters that need to be updated during initialization */
 	REG_INIT,
-	/* Sensor egisters that needs periodic I2C writes */
 	UPDATE_PERIODIC,
-	/* All the sensor Registers will be updated */
 	UPDATE_ALL,
-	/* Not valid update */
 	UPDATE_INVALID
 };
 
@@ -91,22 +86,16 @@ enum mt9p012_setting {
 	RES_CAPTURE
 };
 
-/* actuator's Slave Address */
 #define MT9P012_AF_I2C_ADDR   0x0A
-
-/* AF Total steps parameters */
 #define MT9P012_STEPS_NEAR_TO_CLOSEST_INF  20
 #define MT9P012_TOTAL_STEPS_NEAR_TO_FAR    20
 
 #define MT9P012_MU5M0_PREVIEW_DUMMY_PIXELS 0
 #define MT9P012_MU5M0_PREVIEW_DUMMY_LINES  0
 
-/* Time in milisecs for waiting for the sensor to reset.*/
 #define MT9P012_RESET_DELAY_MSECS   66
-
-/* for 20 fps preview */
 #define MT9P012_DEFAULT_CLOCK_RATE  24000000
-#define MT9P012_DEFAULT_MAX_FPS     26	/* ???? */
+#define MT9P012_DEFAULT_MAX_FPS     26	
 
 struct mt9p012_work {
 	struct work_struct work;
@@ -118,8 +107,8 @@ struct mt9p012_ctrl {
 	const struct msm_camera_sensor_info *sensordata;
 
 	int sensormode;
-	uint32_t fps_divider;	/* init to 1 * 0x00000400 */
-	uint32_t pict_fps_divider;	/* init to 1 * 0x00000400 */
+	uint32_t fps_divider;	
+	uint32_t pict_fps_divider;	
 
 	uint16_t curr_lens_pos;
 	uint16_t init_curr_lens_pos;
@@ -138,8 +127,6 @@ static uint16_t update_type = UPDATE_PERIODIC;
 static struct mt9p012_ctrl *mt9p012_ctrl;
 static DECLARE_WAIT_QUEUE_HEAD(mt9p012_wait_queue);
 DEFINE_MUTEX(mt9p012_mut);
-
-/*=============================================================*/
 
 static int mt9p012_i2c_rxdata(unsigned short saddr, int slength,
 			      unsigned char *rxdata, int rxlength)
@@ -354,9 +341,8 @@ static int32_t mt9p012_set_lc(void)
 
 static void mt9p012_get_pict_fps(uint16_t fps, uint16_t *pfps)
 {
-	/* input fps is preview fps in Q8 format */
-	uint32_t divider;	/*Q10 */
-	uint32_t pclk_mult;	/*Q10 */
+	uint32_t divider;	
+	uint32_t pclk_mult;	
 
 	if (mt9p012_ctrl->prev_res == QTR_SIZE) {
 		divider = (uint32_t)
@@ -372,12 +358,10 @@ static void mt9p012_get_pict_fps(uint16_t fps, uint16_t *pfps)
 				(mt9p012_regs.reg_pat[RES_PREVIEW].
 				 pll_multiplier));
 	} else {
-		/* full size resolution used for preview. */
 		divider = 0x00000400;	/*1.0 */
-		pclk_mult = 0x00000400;	/*1.0 */
+		pclk_mult = 0x00000400;	
 	}
 
-	/* Verify PCLK settings and frame sizes. */
 	*pfps = (uint16_t) (fps * divider * pclk_mult / 0x00000400 /
 			    0x00000400);
 }
@@ -424,7 +408,6 @@ static uint32_t mt9p012_get_pict_max_exp_lc(void)
 
 static int32_t mt9p012_set_fps(struct fps_cfg *fps)
 {
-	/* input is new fps in Q10 format */
 	int32_t rc = 0;
 	enum mt9p012_setting setting;
 
@@ -474,7 +457,6 @@ static int32_t mt9p012_write_exp_gain(uint16_t gain, uint32_t line)
 		gain = max_legal_gain;
 	}
 
-	/* Verify no overflow */
 	if (mt9p012_ctrl->sensormode == SENSOR_PREVIEW_MODE) {
 		line = (uint32_t) (line * mt9p012_ctrl->fps_divider /
 				   0x00000400);
@@ -484,8 +466,6 @@ static int32_t mt9p012_write_exp_gain(uint16_t gain, uint32_t line)
 				   0x00000400);
 		setting = RES_CAPTURE;
 	}
-
-	/* Set digital gain to 1 */
 #ifdef MT9P012_REV_7
 	gain |= 0x1000;
 #else
@@ -538,7 +518,6 @@ static int32_t mt9p012_set_pict_exp_gain(uint16_t gain, uint32_t line)
 
 	mdelay(5);
 
-	/* camera_timed_wait(snapshot_wait*exposure_ratio); */
 	return rc;
 }
 
@@ -603,11 +582,11 @@ static int32_t mt9p012_setting(enum mt9p012_reg_update rupdate,
 			if (rc < 0)
 				return rc;
 
-			mdelay(5);	/* 15? wait for sensor to transition */
+			mdelay(5);	
 
 			return rc;
 		}
-		break;		/* UPDATE_PERIODIC */
+		break;		
 
 	case REG_INIT:
 		if (rt == RES_PREVIEW || rt == RES_CAPTURE) {
@@ -637,7 +616,6 @@ static int32_t mt9p012_setting(enum mt9p012_reg_update rupdate,
 				{0x312C, 0x00E4},
 				{0x3170, 0x299A},
 #endif
-				/* optimized settings for noise */
 				{0x3088, 0x6FF6},
 				{0x3154, 0x0282},
 				{0x3156, 0x0381},
@@ -677,7 +655,6 @@ static int32_t mt9p012_setting(enum mt9p012_reg_update rupdate,
 				{0x312C, 0x00E4},
 				{0x3170, 0x299A},
 #endif
-				/* optimized settings for noise */
 				{0x3088, 0x6FF6},
 				{0x3154, 0x0282},
 				{0x3156, 0x0381},
@@ -694,7 +671,6 @@ static int32_t mt9p012_setting(enum mt9p012_reg_update rupdate,
 			struct mt9p012_i2c_reg_conf ipc_tbl3[] = {
 				{REG_GROUPED_PARAMETER_HOLD,
 				 GROUPED_PARAMETER_HOLD},
-				/* Set preview or snapshot mode */
 				{REG_ROW_SPEED,
 				 mt9p012_regs.reg_pat[rt].row_speed},
 				{REG_X_ADDR_START,
@@ -723,8 +699,6 @@ static int32_t mt9p012_setting(enum mt9p012_reg_update rupdate,
 				{REG_GROUPED_PARAMETER_HOLD,
 				 GROUPED_PARAMETER_UPDATE},
 			};
-
-			/* reset fps_divider */
 			mt9p012_ctrl->fps_divider = 1 * 0x0400;
 
 			rc = mt9p012_i2c_write_w_table(&ipc_tbl1[0],
@@ -744,7 +718,6 @@ static int32_t mt9p012_setting(enum mt9p012_reg_update rupdate,
 			if (rc < 0)
 				return rc;
 
-			/* load lens shading */
 			rc = mt9p012_i2c_write_w(mt9p012_client->addr,
 						 REG_GROUPED_PARAMETER_HOLD,
 						 GROUPED_PARAMETER_HOLD);
@@ -763,12 +736,12 @@ static int32_t mt9p012_setting(enum mt9p012_reg_update rupdate,
 				return rc;
 		}
 		update_type = rupdate;
-		break;		/* case REG_INIT: */
+		break;	
 
 	default:
 		rc = -EINVAL;
 		break;
-	}			/* switch (rupdate) */
+	}			
 
 	return rc;
 }
@@ -795,7 +768,7 @@ static int32_t mt9p012_video_config(int mode, int res)
 
 	default:
 		return 0;
-	}			/* switch */
+	}			
 
 	mt9p012_ctrl->prev_res = res;
 	mt9p012_ctrl->curr_res = res;
@@ -904,7 +877,6 @@ static int32_t mt9p012_move_focus(int direction, int32_t num_steps)
 	if (rc < 0)
 		return rc;
 	temp_pos = (uint8_t) (actual_position_target & 0x00FF);
-	/* code_val_lsb |= mode_mask; */
 	rc = mt9p012_i2c_write_b(MT9P012_AF_I2C_ADDR >> 1, 0x06, temp_pos);
 	if (rc < 0)
 		return rc;
@@ -917,8 +889,6 @@ static int32_t mt9p012_move_focus(int direction, int32_t num_steps)
 		return rc;
 
 	mdelay(time_out);
-
-	/* Storing the current lens Position */
 	mt9p012_ctrl->curr_lens_pos = next_position;
 
 	return rc;
@@ -930,7 +900,6 @@ static int32_t mt9p012_set_default_focus(void)
 
 	uint8_t temp_pos;
 
-	/* Write the digital code for current to the actuator */
 	rc = mt9p012_i2c_write_b(MT9P012_AF_I2C_ADDR >> 1, 0x01, 0x29);
 	if (rc < 0)
 		return rc;
@@ -979,7 +948,6 @@ static int mt9p012_probe_init_sensor(const struct msm_camera_sensor_info *data)
 
 	msleep(20);
 
-	/* RESET the sensor image part via I2C command */
 	rc = mt9p012_i2c_write_w(mt9p012_client->addr,
 				 MT9P012_REG_RESET_REGISTER, 0x10CC | 0x0001);
 	if (rc < 0) {
@@ -989,13 +957,11 @@ static int mt9p012_probe_init_sensor(const struct msm_camera_sensor_info *data)
 
 	msleep(MT9P012_RESET_DELAY_MSECS);
 
-	/* 3. Read sensor Model ID: */
 	rc = mt9p012_i2c_read_w(mt9p012_client->addr,
 				MT9P012_REG_MODEL_ID, &chipid);
 	if (rc < 0)
 		goto init_probe_fail;
 
-	/* 4. Compare sensor ID to MT9T012VC ID: */
 	if (chipid != MT9P012_MODEL_ID) {
 		rc = -ENODEV;
 		goto init_probe_fail;
@@ -1007,14 +973,11 @@ static int mt9p012_probe_init_sensor(const struct msm_camera_sensor_info *data)
 		goto init_probe_fail;
 	}
 
-	/* RESET_REGISTER, enable parallel interface and disable serialiser */
 	rc = mt9p012_i2c_write_w(mt9p012_client->addr, 0x301A, 0x10CC);
 	if (rc < 0) {
 		CDBG("enable parallel interface failed. rc = %d\n", rc);
 		goto init_probe_fail;
 	}
-
-	/* To disable the 2 extra lines */
 	rc = mt9p012_i2c_write_w(mt9p012_client->addr, 0x3064, 0x0805);
 
 	if (rc < 0) {
@@ -1070,7 +1033,6 @@ static int mt9p012_sensor_open_init(const struct msm_camera_sensor_info *data)
 		goto init_fail1;
 	}
 
-	/* sensor : output enable */
 	rc = mt9p012_i2c_write_w(mt9p012_client->addr,
 				 MT9P012_REG_RESET_REGISTER,
 				 MT9P012_RESET_REGISTER_PWON);
@@ -1078,8 +1040,6 @@ static int mt9p012_sensor_open_init(const struct msm_camera_sensor_info *data)
 		CDBG("sensor output enable failed. rc = %d\n", rc);
 		goto init_fail1;
 	}
-
-	/* enable AF actuator */
 	rc = gpio_request(mt9p012_ctrl->sensordata->vcm_pwd, "mt9p012");
 	if (!rc)
 		gpio_direction_output(mt9p012_ctrl->sensordata->vcm_pwd, 1);
@@ -1092,7 +1052,6 @@ static int mt9p012_sensor_open_init(const struct msm_camera_sensor_info *data)
 
 	bam_infinite = 0;
 	bam_macro = 0;
-	/*initialize AF actuator */
 	mt9p012_i2c_write_b(MT9P012_AF_I2C_ADDR >> 1, 0x01, 0x09);
 	mt9p012_i2c_write_b(MT9P012_AF_I2C_ADDR >> 1, 0x07, 0x2E);
 	mt9p012_i2c_write_b(MT9P012_AF_I2C_ADDR >> 1, 0x0A, 0x01);
@@ -1149,7 +1108,6 @@ init_done:
 
 static int mt9p012_init_client(struct i2c_client *client)
 {
-	/* Initialize the MSM_CAMI2C Chip */
 	init_waitqueue_head(&mt9p012_wait_queue);
 	return 0;
 }

@@ -60,13 +60,14 @@ static uint32_t bytes_per_pixel[] = {
 extern uint32 mdp_plv[];
 extern struct semaphore mdp_ppp_mutex;
 
-uint32_t mdp_get_bytes_per_pixel(uint32_t format)
+int mdp_get_bytes_per_pixel(uint32_t format)
 {
-	uint32_t bpp = 0;
+	int bpp = -EINVAL;
 	if (format < ARRAY_SIZE(bytes_per_pixel))
 		bpp = bytes_per_pixel[format];
 
-	BUG_ON(!bpp);
+	if (bpp <= 0)
+		printk(KERN_ERR "%s incorrect format %d\n", __func__, format);
 	return bpp;
 }
 
@@ -1372,11 +1373,14 @@ int mdp_ppp_blit(struct fb_info *info, struct mdp_blit_req *req)
 	if (req->flags & MDP_DEINTERLACE) {
 #ifdef CONFIG_FB_MSM_MDP31
 		if ((req->src.format != MDP_Y_CBCR_H2V2) &&
-			(req->src.format != MDP_Y_CRCB_H2V2))
+			(req->src.format != MDP_Y_CRCB_H2V2)) {
 #endif
 			put_img(p_src_file);
 			put_img(p_dst_file);
 			return -EINVAL;
+#ifdef CONFIG_FB_MSM_MDP31
+		}
+#endif
 	}
 
 	/* scale check */

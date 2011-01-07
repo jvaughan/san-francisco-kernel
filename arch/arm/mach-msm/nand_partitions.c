@@ -46,7 +46,8 @@ struct msm_ptbl_entry {
 	__u32 flags;
 };
 
-#define MSM_MAX_PARTITIONS 8
+//ZTE_FOTA_MXF_20100908_01 change the max partition num from 8 to 16
+#define MSM_MAX_PARTITIONS 16
 
 static struct mtd_partition msm_nand_partitions[MSM_MAX_PARTITIONS];
 static char msm_nand_names[MSM_MAX_PARTITIONS * 16];
@@ -148,11 +149,8 @@ static int get_nand_partitions(void)
 
 	msm_nand_data.nr_parts = 0;
 
-	/* Get the LINUX FS partition info */
 	for (part = 0; part < partition_table->numparts; part++) {
 		part_entry = &partition_table->part_entry[part];
-
-		/* Find a match for the Linux file system partition */
 		if (strcmp(part_entry->name, LINUX_FS_PARTITION_NAME) == 0) {
 			strcpy(name, part_entry->name);
 			ptn->name = name;

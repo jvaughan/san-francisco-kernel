@@ -33,8 +33,12 @@
 #include <linux/bootmem.h>
 #include <linux/syscalls.h>
 #include <linux/kexec.h>
+#include <linux/rtc.h>
 
 #include <asm/uaccess.h>
+
+static int printk_proc_info = 1;
+module_param_named(printk_proc_info, printk_proc_info, int, S_IRUGO | S_IWUSR);
 
 /*
  * for_each_console() allows you to iterate on each console
@@ -809,18 +813,44 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 				/* Follow the token with the time */
 				char tbuf[50], *tp;
 				unsigned tlen;
+#if 0
 				unsigned long long t;
 				unsigned long nanosec_rem;
-
+#endif
+				/* caozy: use wall time instead of jiffies. */
+				struct timespec ts;
+				struct rtc_time tm;
+				
+				ts = current_kernel_time();
+				rtc_time_to_tm(ts.tv_sec, &tm);
+				tlen = sprintf(tbuf, "[%02d-%02d %02d:%02d:%02d.%06d] ",
+					tm.tm_mon + 1, tm.tm_mday,
+					tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(ts.tv_nsec / NSEC_PER_USEC));
+#if 0
 				t = cpu_clock(printk_cpu);
 				nanosec_rem = do_div(t, 1000000000);
 				tlen = sprintf(tbuf, "[%5lu.%06lu] ",
 						(unsigned long) t,
 						nanosec_rem / 1000);
-
+#endif
 				for (tp = tbuf; tp < tbuf + tlen; tp++)
 					emit_log_char(*tp);
 				printed_len += tlen;
+			}
+			if (printk_proc_info) {
+				if (!in_interrupt()){
+				    /* Follow the token with the time */
+				    char proc_info_buf[50], *tp;
+				    unsigned info_len;
+
+				    info_len = sprintf(proc_info_buf, "[%d: %s]",
+						current->pid,
+						current->comm);
+
+				    for (tp = proc_info_buf; tp < proc_info_buf + info_len; tp++)
+					    emit_log_char(*tp);
+				    printed_len += info_len;
+				}
 			}
 
 			if (!*p)
@@ -984,7 +1014,7 @@ int update_console_cmdline(char *name, int idx, char *name_new, int idx_new, cha
 	return -1;
 }
 
-int console_suspend_enabled = 1;
+int console_suspend_enabled = 0;
 EXPORT_SYMBOL(console_suspend_enabled);
 
 static int __init console_suspend_disable(char *str)

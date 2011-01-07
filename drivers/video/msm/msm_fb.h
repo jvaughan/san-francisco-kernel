@@ -63,6 +63,26 @@
 #define MFD_KEY  0x11161126
 #define MSM_FB_MAX_DEV_LIST 32
 
+/********************************
+LCD_PANEL_ID   ZTE_LCD_LHT_20100611_001
+********************************/
+typedef enum {
+	LCD_PANEL_NOPANEL,
+	LCD_PANEL_P726_ILI9325C,
+	LCD_PANEL_P726_HX8347D,
+	LCD_PANEL_P726_S6D04M0X01,
+	LCD_PANEL_P722_HX8352A		=10,
+	LCD_PANEL_P727_HX8352A		=20,
+	LCD_PANEL_R750_ILI9481_1	=30,
+	LCD_PANEL_R750_ILI9481_2,
+	LCD_PANEL_R750_ILI9481_3,
+	LCD_PANEL_P729_TL2796		=40,
+	LCD_PANEL_P729_TFT_TRULY,
+	LCD_PANEL_P729_TFT_LEAD,
+	LCD_PANEL_V9_NT39416I		=50,
+	LCD_PANEL_MAX
+} LCD_PANEL_ID;
+
 struct disp_info_type_suspend {
 	boolean op_enable;
 	boolean sw_refreshing_enable;

@@ -20,7 +20,6 @@
 #include <linux/sched.h>
 #include <linux/wait.h>
 
-#include "kgsl_drawctxt.h"
 #include "kgsl.h"
 #include "kgsl_device.h"
 #include "kgsl_yamato.h"
@@ -107,13 +106,10 @@ void kgsl_cp_intrcallback(struct kgsl_device *device)
 		kgsl_sharedmem_writel(&rb->device->memstore,
 			KGSL_DEVICE_MEMSTORE_OFFSET(ts_cmp_enable),
 			enableflag);
+		wmb();
 		KGSL_CMD_WARN("ringbuffer rb interrupt\n");
 	}
 
-	if (status & (CP_INT_CNTL__IB1_INT_MASK | CP_INT_CNTL__RB_INT_MASK)) {
-		KGSL_CMD_WARN("ringbuffer ib1/rb interrupt\n");
-		wake_up_interruptible_all(&yamato_device->ib1_wq);
-	}
 	if (status & CP_INT_CNTL__T0_PACKET_IN_IB_MASK) {
 		KGSL_CMD_FATAL("ringbuffer TO packet in IB interrupt\n");
 		kgsl_yamato_regwrite(rb->device, REG_CP_INT_CNTL, 0);
@@ -152,16 +148,21 @@ void kgsl_cp_intrcallback(struct kgsl_device *device)
 	status &= GSL_CP_INT_MASK;
 	kgsl_yamato_regwrite(device, REG_CP_INT_ACK, status);
 
+	if (status & (CP_INT_CNTL__IB1_INT_MASK | CP_INT_CNTL__RB_INT_MASK)) {
+		KGSL_CMD_WARN("ringbuffer ib1/rb interrupt\n");
+		wake_up_interruptible_all(&yamato_device->ib1_wq);
+		atomic_notifier_call_chain(&(device->ts_notifier_list),
+					   KGSL_DEVICE_YAMATO,
+					   NULL);
+	}
+
 	KGSL_CMD_VDBG("return\n");
 }
 
 
-void kgsl_ringbuffer_watchdog()
+void kgsl_ringbuffer_watchdog(struct kgsl_device *device)
 {
-	struct kgsl_device *device = NULL;
 	struct kgsl_ringbuffer *rb = NULL;
-
-	device = kgsl_get_yamato_generic_device();
 
 	BUG_ON(device == NULL);
 
@@ -708,7 +709,7 @@ kgsl_ringbuffer_issuecmds(struct kgsl_device *device,
 }
 
 int
-kgsl_ringbuffer_issueibcmds(struct kgsl_device *device,
+kgsl_ringbuffer_issueibcmds(struct kgsl_device_private *dev_priv,
 				int drawctxt_index,
 				uint32_t ibaddr,
 				int sizedwords,
@@ -716,6 +717,7 @@ kgsl_ringbuffer_issueibcmds(struct kgsl_device *device,
 				unsigned int flags)
 {
 	unsigned int link[3];
+	struct kgsl_device *device = dev_priv->device;
 	struct kgsl_yamato_device *yamato_device = (struct kgsl_yamato_device *)
 							device;
 
@@ -724,7 +726,9 @@ kgsl_ringbuffer_issueibcmds(struct kgsl_device *device,
 			device->id, drawctxt_index, ibaddr,
 			sizedwords, timestamp);
 
-	if (!(device->ringbuffer.flags & KGSL_FLAGS_STARTED)) {
+
+	if (!(device->ringbuffer.flags & KGSL_FLAGS_STARTED) ||
+				(drawctxt_index >= KGSL_CONTEXT_MAX)) {
 		KGSL_CMD_VDBG("return %d\n", -EINVAL);
 		return -EINVAL;
 	}

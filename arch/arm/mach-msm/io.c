@@ -1,21 +1,3 @@
-/* arch/arm/mach-msm/io.c
- *
- * MSM7K, QSD io support
- *
- * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2008-2010, Code Aurora Forum. All rights reserved.
- * Author: Brian Swetland <swetland@google.com>
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
 
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -36,9 +18,6 @@
 		.type = MT_DEVICE_NONSHARED, \
 	 }
 
-/* msm_shared_ram_phys default value of 0x00100000 is the most common value
- * and should work as-is for any target without stacked memory.
- */
 unsigned int msm_shared_ram_phys = 0x00100000;
 
 static void msm_map_io(struct map_desc *io_desc, int size)
@@ -46,9 +25,14 @@ static void msm_map_io(struct map_desc *io_desc, int size)
 	int i;
 
 	BUG_ON(!size);
-	for (i = 0; i < size; i++)
+	for (i = 0; i < size; i++) {
 		if (io_desc[i].virtual == (unsigned long)MSM_SHARED_RAM_BASE)
 			io_desc[i].pfn = __phys_to_pfn(msm_shared_ram_phys);
+#if defined(CONFIG_ZTE_PLATFORM) && defined(CONFIG_F3_LOG)
+		if (io_desc[i].virtual == (unsigned long)MSM_RAM_LOG_BASE)
+			io_desc[i].pfn = __phys_to_pfn(msm_shared_ram_phys+0x100000);
+#endif
+    }
 
 	iotable_init(io_desc, size);
 }
@@ -81,14 +65,17 @@ static struct map_desc msm_io_desc[] __initdata = {
 		.length =   MSM_SHARED_RAM_SIZE,
 		.type =     MT_DEVICE,
 	},
+#if defined(CONFIG_ZTE_PLATFORM) && defined(CONFIG_F3_LOG)
+	{
+		.virtual =  (unsigned long) MSM_RAM_LOG_BASE,
+		.length =   MSM_RAM_LOG_SIZE,
+		.type =     MT_DEVICE,
+	},
+#endif
 };
 
 void __init msm_map_common_io(void)
 {
-	/* Make sure the peripheral register window is closed, since
-	 * we will use PTE flags (TEX[1]=1,B=0,C=1) to determine which
-	 * pages are peripheral interface or not.
-	 */
 	asm("mcr p15, 0, %0, c15, c2, 4" : : "r" (0));
 	msm_map_io(msm_io_desc, ARRAY_SIZE(msm_io_desc));
 }
@@ -221,10 +208,6 @@ void __iomem *
 __msm_ioremap(unsigned long phys_addr, size_t size, unsigned int mtype)
 {
 	if (mtype == MT_DEVICE) {
-		/* The peripherals in the 88000000 - F0000000 range
-		 * are only accessable by type MT_DEVICE_NONSHARED.
-		 * Adjust mtype as necessary to make this "just work."
-		 */
 		if ((phys_addr >= 0x88000000) && (phys_addr < 0xF0000000))
 			mtype = MT_DEVICE_NONSHARED;
 	}

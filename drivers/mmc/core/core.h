@@ -38,12 +38,14 @@ void mmc_set_timing(struct mmc_host *host, unsigned int timing);
 
 static inline void mmc_delay(unsigned int ms)
 {
-	if (ms < 1000 / HZ) {
-		cond_resched();
-		mdelay(ms);
-	} else {
-		msleep(ms);
-	}
+	cond_resched();
+	mdelay(ms);
+	/* if (ms < 1000 / HZ) { */
+	/* 	cond_resched(); */
+	/* 	mdelay(ms); */
+	/* } else { */
+	/* 	msleep(ms); */
+	/* } */
 }
 
 void mmc_rescan(struct work_struct *work);

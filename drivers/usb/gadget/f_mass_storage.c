@@ -3028,6 +3028,12 @@ int mass_storage_function_add(struct usb_composite_dev *cdev,
 	fsg->function.set_alt = fsg_function_set_alt;
 	fsg->function.disable = fsg_function_disable;
 
+	if (!fsg->vendor)
+		fsg->vendor = "ZTE";
+	if (!fsg->product)
+		fsg->product = "Mass storage";
+
+
 	rc = usb_add_function(c, &fsg->function);
 	if (rc != 0)
 		goto err_usb_add_function;

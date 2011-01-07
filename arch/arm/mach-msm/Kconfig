@@ -139,6 +139,41 @@ config MACH_MSM7X27_FFA
 	help
 	  Support for the Qualcomm MSM7x27 FFA eval board.
 
+config ZTE_PLATFORM
+	bool "ZTE Platform"	
+	default y
+	help
+	  Global macro for ZTE code	  
+	  
+config F3_LOG
+        depends on ARCH_MSM
+        depends on !MSM_STACKED_MEMORY
+        default y
+        bool "F3 Log"
+        help
+          Support for F3 log.	  
+
+config MACH_BLADE
+	depends on ARCH_MSM7X27
+	depends on !MSM_STACKED_MEMORY
+	default n
+	bool "ZTE BLADE"
+	select ZTE_PLATFORM
+	help
+	  Support for the ZTE MSM7x27 Blade phone.
+
+config MACH_BLADE_CAMERA5MP
+	depends on MACH_BLADE
+	default n
+	bool "ZTE blade board,5MP camera."
+	help
+	  Support for the ZTE blade board,5MP camera.
+
+config ZTE_FTM_FLAG_SUPPORT
+	depends on ZTE_PLATFORM
+	default y
+	bool "enable ZTE handset FTM mode detect."
+
 config MACH_MSM7X30_SURF
        depends on ARCH_MSM7X30
        depends on !MSM_STACKED_MEMORY
@@ -312,9 +347,10 @@ config MSM_STACKED_MEMORY
 	  memory.  When present this memory bank is used for a high speed
 	  shared memory interface.  When not present regular RAM is used.
 
+#ZTE_BOOT_HUANGYANJUN_20100903_01 0x2A00000 ->0x02600000
 config PHYS_OFFSET
 	hex
-	default "0x00200000" if !MSM_STACKED_MEMORY
+	default "0x02600000" if !MSM_STACKED_MEMORY
 	default "0x00000000" if ARCH_QSD8X50 && MSM_SOC_REV_A
 	default "0x20000000" if ARCH_QSD8X50
 	default "0x40200000" if ARCH_MSM8X60

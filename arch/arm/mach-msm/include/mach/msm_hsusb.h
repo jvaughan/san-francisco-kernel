@@ -122,6 +122,7 @@ struct msm_hsusb_platform_data {
 	int vreg5v_required;
 
 	u32 swfi_latency;
+	int zte_pid;//hemulu hyj add to froyo
 };
 
 struct msm_otg_platform_data {

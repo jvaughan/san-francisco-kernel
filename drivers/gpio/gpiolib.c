@@ -1037,6 +1037,12 @@ int gpio_request(unsigned gpio, const char *label)
 
 	if (test_and_set_bit(FLAG_REQUESTED, &desc->flags) == 0) {
 		desc_set_label(desc, label ? : "?");
+		//xiayc for 729J touchscreen test
+		{
+		if (gpio==31)
+			printk("xiayc,gpiolib: gpio %d,label=%s\n",gpio,desc->label);
+		}
+
 		status = 0;
 	} else {
 		status = -EBUSY;

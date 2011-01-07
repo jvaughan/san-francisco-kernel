@@ -75,7 +75,156 @@ module_param_call(product_id, android_set_pid, android_get_pid,
 					&product_id, 0664);
 MODULE_PARM_DESC(product_id, "USB device product id");
 
-/* serial number */
+
+struct usb_composition *android_validate_product_id(unsigned short pid);
+
+
+#define PRODUCT_ID_ALL_INTERFACE          0x1350
+#define PRODUCT_ID_MS_ADB                      0x1351
+#define PRODUCT_ID_ADB                             0x1352
+#define PRODUCT_ID_MS                               0x1353
+#define PRODUCT_ID_DIAG                           0x0112
+#define PRODUCT_ID_DIAG_NMEA_MODEM   0x0111
+#define PRODUCT_ID_MODEM_MS_ADB         0x1354
+#define PRODUCT_ID_MODEM_MS                 0x1355
+#define PRODUCT_ID_MS_CDROM                 0x0083
+#define PRODUCT_ID_RNDIS_MS                 0x1364
+#define PRODUCT_ID_RNDIS_MS_ADB             0x1364
+#define PRODUCT_ID_RNDIS             0x1365
+#define PRODUCT_ID_RNDIS_ADB             0x1373
+
+int support_assoc_desc(void)
+{
+	return product_id == PRODUCT_ID_RNDIS ? 0 : 1;
+}
+
+
+enum usb_opt_nv_item
+{
+	NV_BACK_LIGHT_I=77,
+	NV_FTM_MODE_I = 453
+};
+enum usb_opt_nv_type
+{
+	NV_READ=0,
+	NV_WRITE
+};
+
+int
+msm_hsusb_get_set_usb_conf_nv_value(uint32_t nv_item,uint32_t value,uint32_t is_write);
+int get_ftm_from_tag(void);
+
+static int zte_usb_pid[]={
+	PRODUCT_ID_ALL_INTERFACE,
+        PRODUCT_ID_MS_ADB,
+        PRODUCT_ID_ADB,
+        PRODUCT_ID_MS,
+        PRODUCT_ID_DIAG,
+        PRODUCT_ID_DIAG_NMEA_MODEM,
+        PRODUCT_ID_MODEM_MS_ADB,
+        PRODUCT_ID_MODEM_MS,
+        PRODUCT_ID_MS_CDROM
+};
+#define PRODUCT_ID_COUNT    (sizeof(zte_usb_pid)/sizeof(zte_usb_pid[0]))
+
+
+#define NV_WRITE_SUCCESS 10
+
+
+
+static int ftm_mode = 0;
+static int is_ftm_mode(void)
+{
+	return !!ftm_mode;
+}
+static void set_ftm_mode(int i)
+{
+	ftm_mode = i;
+	return ;
+}
+
+static int get_nv(void) 
+{
+	return msm_hsusb_get_set_usb_conf_nv_value(NV_BACK_LIGHT_I,0,NV_READ);
+}
+static int set_nv(int nv)
+{
+	int r = msm_hsusb_get_set_usb_conf_nv_value(NV_BACK_LIGHT_I,nv,NV_WRITE);
+	return (r == NV_WRITE_SUCCESS)? 0:-1;
+}
+
+
+static int config_ftm_from_nv(void)
+{
+	int i = 0;
+	if (is_ftm_mode()) {
+		return 0;
+	}
+	i = get_nv();
+	if (i < 0 || i >= PRODUCT_ID_COUNT) {
+		return -1;
+	}
+	set_ftm_mode((PRODUCT_ID_DIAG == zte_usb_pid[i])? 1:0);
+	printk("usb: %s, %d: ftm_mode %s\n",
+	       __FUNCTION__, __LINE__,
+	       is_ftm_mode()?"enable":"disable");
+	if (is_ftm_mode()) {
+		product_id = PRODUCT_ID_DIAG;
+	}
+	return 0;
+}
+
+static int config_ftm_from_tag(void)
+{
+	if (is_ftm_mode()) {
+		return 0;
+	}
+	
+	set_ftm_mode(get_ftm_from_tag());
+
+	printk("usb: %s, %d: ftm_mode %s\n",
+	       __FUNCTION__, __LINE__,
+	       is_ftm_mode()?"enable":"disable");
+	if (is_ftm_mode()) {
+		product_id = PRODUCT_ID_DIAG;
+	}
+	return 0;
+}
+
+static ssize_t msm_hsusb_set_pidnv(struct device *dev,
+                                   struct device_attribute *attr,
+                                   const char *buf, size_t size)
+{
+        int value;
+        sscanf(buf, "%d", &value);
+        set_nv(value);
+        return size;
+}
+
+static ssize_t msm_hsusb_show_pidnv(struct device *dev,
+				    struct device_attribute *attr,
+				    char *buf)
+{
+        int i = 0;
+        i = scnprintf(buf, PAGE_SIZE, "nv %d\n", get_nv());
+
+        return i;
+}
+
+
+static ssize_t msm_hsusb_show_ftm(struct device *dev,
+				    struct device_attribute *attr,
+				    char *buf)
+{
+        int i = 0;
+        i = scnprintf(buf, PAGE_SIZE, "%s\n", is_ftm_mode()?"enable":"disable");
+        return i;
+}
+
+
+
+
+
 #define MAX_SERIAL_LEN 256
 static char serial_number[MAX_SERIAL_LEN] = "1234567890ABCDEF";
 static struct kparam_string kps = {
@@ -174,6 +323,12 @@ android_func_attr(cdc_ecm, ANDROID_CDC_ECM);
 android_func_attr(rmnet, ANDROID_RMNET);
 android_func_attr(rndis, ANDROID_RNDIS);
 
+static DEVICE_ATTR(pidnv, 0664,
+                   msm_hsusb_show_pidnv, msm_hsusb_set_pidnv);
+static DEVICE_ATTR(ftm_mode, 0664,
+                   msm_hsusb_show_ftm, NULL);
+
+
 static struct attribute *android_func_attrs[] = {
 	&dev_attr_adb.attr,
 	&dev_attr_mass_storage.attr,
@@ -185,6 +340,9 @@ static struct attribute *android_func_attrs[] = {
 	&dev_attr_cdc_ecm.attr,
 	&dev_attr_rmnet.attr,
 	&dev_attr_rndis.attr,
+	&dev_attr_pidnv.attr,
+	&dev_attr_ftm_mode.attr,
+
 	NULL,
 };
 
@@ -357,11 +515,18 @@ static int  android_bind(struct usb_composite_dev *cdev)
 	strings_dev[STRING_PRODUCT_IDX].id = id;
 	device_desc.iProduct = id;
 
-	id = usb_string_id(cdev);
-	if (id < 0)
-		return id;
-	strings_dev[STRING_SERIAL_IDX].id = id;
-	device_desc.iSerialNumber = id;
+
+	if (!is_ftm_mode()) {
+		id = usb_string_id(cdev);
+		if (id < 0)
+			return id;
+		strings_dev[STRING_SERIAL_IDX].id = id;
+		device_desc.iSerialNumber = id;
+	} else {
+		strings_dev[STRING_SERIAL_IDX].id = 0;
+		device_desc.iSerialNumber = 0;
+	}
+
 
 	device_desc.idProduct = __constant_cpu_to_le16(product_id);
 	/* Supporting remote wakeup for mass storage only function
@@ -429,6 +594,13 @@ static int  android_bind(struct usb_composite_dev *cdev)
 		device_desc.bDeviceClass         = USB_CLASS_MISC;
 		device_desc.bDeviceSubClass      = 0x02;
 		device_desc.bDeviceProtocol      = 0x01;
+
+		if (!support_assoc_desc()) {
+			device_desc.bDeviceClass         =  USB_CLASS_WIRELESS_CONTROLLER;
+			device_desc.bDeviceSubClass      = 0;
+			device_desc.bDeviceProtocol      = 0;
+		}
+
 	} else {
 		device_desc.bDeviceClass         = USB_CLASS_PER_INTERFACE;
 		device_desc.bDeviceSubClass      = 0;
@@ -483,7 +655,7 @@ static int android_switch_composition(u16 pid)
 		product_id = func->product_id;
 		dev->functions = func->functions;
 	}
-
+	printk("usb:%s: %d: current pid 0x%x\n", __FUNCTION__, __LINE__, product_id);
 	usb_composite_unregister(&android_usb_driver);
 	ret = usb_composite_register(&android_usb_driver);
 
@@ -539,7 +711,7 @@ static int android_set_pid(const char *val, struct kernel_param *kp)
 	ret = strict_strtoul(val, 16, &tmp);
 	if (ret)
 		goto out;
-
+	printk("usb:%s: %d 0x%lx\n", __FUNCTION__, __LINE__, tmp);
 	/* We come here even before android_probe, when product id
 	 * is passed via kernel command line.
 	 */
@@ -547,7 +719,7 @@ static int android_set_pid(const char *val, struct kernel_param *kp)
 		product_id = tmp;
 		goto out;
 	}
-
+	
 	mutex_lock(&_android_dev->lock);
 	ret = android_switch_composition(tmp);
 	mutex_unlock(&_android_dev->lock);
@@ -578,8 +750,9 @@ static int adb_enable_open(struct inode *ip, struct file *fp)
 
 	dev->adb_enabled = 1;
 	pr_debug("enabling adb\n");
-	if (product_id)
+	if (product_id) 
 		ret = android_switch_composition(product_id);
+
 out:
 	mutex_unlock(&dev->lock);
 
@@ -672,6 +845,9 @@ static int __init init(void)
 		goto out;
 	}
 
+
+	config_ftm_from_tag();
+	config_ftm_from_nv();
 	_android_dev = dev;
 	mutex_init(&dev->lock);
 
@@ -740,3 +916,5 @@ static void __exit cleanup(void)
 	_android_dev = NULL;
 }
 module_exit(cleanup);
+
+

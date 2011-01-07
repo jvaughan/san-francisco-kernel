@@ -7,6 +7,8 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or (at
  * your option) any later version.
+ *
+ *CHANGE LOG
  */
 
 #include <linux/err.h>
@@ -242,7 +244,19 @@ static int mmc_sdio_init_card(struct mmc_host *host, u32 ocr,
 
 	BUG_ON(!host);
 	WARN_ON(!host->claimed);
+	{
+		struct mmc_card tempcard;
+		tempcard.host = host;
+		mmc_io_rw_direct(&tempcard, 1, 0, SDIO_CCCR_ABORT, 0x08, NULL);
+	}
 
+	/*
+	 * Since we're changing the OCR value, we seem to
+	 * need to tell some cards to go back to the idle
+	 * state.  We wait 1ms to give cards time to
+	 * respond.
+	 */
+	mmc_go_idle(host);
 	/*
 	 * Inform the card of the voltage
 	 */
@@ -329,7 +343,6 @@ static int mmc_sdio_init_card(struct mmc_host *host, u32 ocr,
 			goto err;
 		}
 		card = oldcard;
-		return 0;
 	}
 
 	/*
@@ -550,12 +563,16 @@ int mmc_attach_sdio(struct mmc_host *host, u32 ocr)
 		card->sdio_funcs = funcs = host->embedded_sdio_data.num_funcs;
 #endif
 
+#if 0
+
 	/*
 	 * If needed, disconnect card detection pull-up resistor.
 	 */
 	err = sdio_disable_cd(card);
 	if (err)
 		goto remove;
+
+#endif
 
 	/*
 	 * Initialize (but don't add) all present functions.

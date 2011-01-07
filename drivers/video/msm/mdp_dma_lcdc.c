@@ -37,7 +37,11 @@
 #include "mdp.h"
 #include "msm_fb.h"
 #include "mdp4.h"
-
+#ifdef CONFIG_FB_MSM_LCDC_OLED_WVGA   
+extern void lcdc_lead_sleep(void);
+extern void lcdc_truly_sleep(void);
+extern u32 LcdPanleID;
+#endif
 #ifdef CONFIG_FB_MSM_MDP40
 #define LCDC_BASE	0xC0000
 #define DTV_BASE	0xD0000
@@ -55,6 +59,7 @@ extern uint32 mdp_intr_mask;
 
 int first_pixel_start_x;
 int first_pixel_start_y;
+static bool firstupdate = TRUE;		
 
 int mdp_lcdc_on(struct platform_device *pdev)
 {
@@ -117,14 +122,26 @@ int mdp_lcdc_on(struct platform_device *pdev)
 	buf = (uint8 *) fbi->fix.smem_start;
 	buf += fbi->var.xoffset * bpp + fbi->var.yoffset * fbi->fix.line_length;
 
+#ifdef CONFIG_ZTE_PLATFORM
+	dma2_cfg_reg = DMA_PACK_ALIGN_MSB | DMA_DITHER_EN | DMA_OUT_SEL_LCDC;
+
+#else
 	dma2_cfg_reg = DMA_PACK_ALIGN_LSB | DMA_DITHER_EN | DMA_OUT_SEL_LCDC;
+#endif
 
 	if (mfd->fb_imgType == MDP_BGR_565)
 		dma2_cfg_reg |= DMA_PACK_PATTERN_BGR;
-	else if (mfd->fb_imgType == MDP_RGBA_8888)
-		dma2_cfg_reg |= DMA_PACK_PATTERN_BGR;
 	else
-		dma2_cfg_reg |= DMA_PACK_PATTERN_RGB;
+		{
+		#ifdef CONFIG_FB_MSM_LCDC_OLED_WVGA
+			if(mfd->panel_info.bl_max==32)
+				dma2_cfg_reg |= DMA_PACK_PATTERN_RGB;
+			else
+				dma2_cfg_reg |= DMA_PACK_PATTERN_BGR;
+		#else
+			dma2_cfg_reg |= DMA_PACK_PATTERN_RGB;
+		#endif
+		}
 
 	if (bpp == 2)
 		dma2_cfg_reg |= DMA_IBUF_FORMAT_RGB565;
@@ -165,7 +182,7 @@ int mdp_lcdc_on(struct platform_device *pdev)
 #endif
 
 	/* starting address */
-	MDP_OUTP(MDP_BASE + dma_base + 0x8, (uint32) buf);
+//	MDP_OUTP(MDP_BASE + dma_base + 0x8, (uint32) buf);
 	/* active window width and height */
 	MDP_OUTP(MDP_BASE + dma_base + 0x4, ((fbi->var.yres) << 16) |
 						(fbi->var.xres));
@@ -303,7 +320,12 @@ int mdp_lcdc_off(struct platform_device *pdev)
 		timer_base = DTV_BASE;
 	}
 #endif
-
+#ifdef CONFIG_FB_MSM_LCDC_OLED_WVGA  
+	if(LcdPanleID==42)
+		lcdc_lead_sleep();
+	if(LcdPanleID==41)
+		lcdc_truly_sleep();
+#endif
 	/* MDP cmd block enable */
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
 	MDP_OUTP(MDP_BASE + timer_base, 0);
@@ -314,7 +336,7 @@ int mdp_lcdc_off(struct platform_device *pdev)
 	ret = panel_next_off(pdev);
 
 	/* delay to make sure the last frame finishes */
-	mdelay(100);
+	msleep(20);	
 
 	return ret;
 }
@@ -349,9 +371,16 @@ void mdp_lcdc_update(struct msm_fb_data_type *mfd)
 		dma_base = DMA_E_BASE;
 	}
 #endif
+	if(firstupdate)			
+	{
+		firstupdate = FALSE;
 
+	}
+	else
+	{
 	/* starting address */
 	MDP_OUTP(MDP_BASE + dma_base + 0x8, (uint32) buf);
+	}
 
 	/* enable LCDC irq */
 	spin_lock_irqsave(&mdp_spin_lock, flag);

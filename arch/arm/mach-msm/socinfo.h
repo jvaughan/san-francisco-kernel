@@ -52,6 +52,11 @@ enum msm_cpu {
 };
 
 enum msm_cpu socinfo_get_msm_cpu(void);
+#ifdef CONFIG_ZTE_PLATFORM
+#ifdef CONFIG_ZTE_FTM_FLAG_SUPPORT
+void zte_ftm_set_value(int val);
+#endif
+#endif
 uint32_t socinfo_get_id(void);
 uint32_t socinfo_get_version(void);
 char *socinfo_get_build_id(void);

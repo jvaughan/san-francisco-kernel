@@ -63,7 +63,8 @@ static int msm_rpc_connect_timeout_ms;
 module_param_named(connect_timeout, msm_rpc_connect_timeout_ms,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
 
-static int smd_rpcrouter_debug_mask;
+
+static int smd_rpcrouter_debug_mask = SMEM_LOG;
 module_param_named(debug_mask, smd_rpcrouter_debug_mask,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
 
@@ -1724,6 +1725,8 @@ int __msm_rpc_read(struct msm_rpc_endpoint *ept,
 
 	spin_lock_irqsave(&ept->read_q_lock, flags);
 	if (list_empty(&ept->read_q)) {
+		wake_unlock(&ept->read_q_wake_lock);
+		printk("[SMD] fix rpc_read wakelock deadlock bug\n");
 		spin_unlock_irqrestore(&ept->read_q_lock, flags);
 		return -EAGAIN;
 	}

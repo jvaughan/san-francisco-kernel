@@ -16,7 +16,6 @@
 #ifndef __ASM_ARCH_MEMORY_H
 #define __ASM_ARCH_MEMORY_H
 
-/* physical offset of RAM */
 #define PHYS_OFFSET UL(CONFIG_PHYS_OFFSET)
 
 #define MAX_PHYSMEM_BITS 32
@@ -41,7 +40,7 @@ void map_zero_page_strongly_ordered(void);
 #include <asm/mach-types.h>
 
 #define arch_barrier_extra() do \
-	{ if (machine_is_msm7x27_surf() || machine_is_msm7x27_ffa())  \
+	{\
 		write_to_strongly_ordered_memory(); \
 	} while (0)
 #endif
@@ -59,7 +58,6 @@ extern void l2x0_cache_sync(void);
 
 #endif
 
-/* these correspond to values known by the modem */
 #define MEMORY_DEEP_POWERDOWN	0
 #define MEMORY_SELF_REFRESH	1
 #define MEMORY_ACTIVE		2

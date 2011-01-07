@@ -618,6 +618,18 @@ static int __init msm_init_gpio(void)
 
 postcore_initcall(msm_init_gpio);
 
+
+#define ZTE_FEATURE_SLEEP_GPIO_CNF_APP
+
+
+#ifdef ZTE_FEATURE_SLEEP_GPIO_CNF_APP
+int gpio_sleep_tlmm_config(unsigned config, unsigned disable)
+{
+	return msm_proc_comm(PCOM_CUSTOMER_CMD3, &config, &disable);
+}
+EXPORT_SYMBOL(gpio_sleep_tlmm_config);
+
+#endif
 #if defined(CONFIG_DEBUG_FS)
 
 static int msm_gpio_debug_result = 1;
@@ -633,6 +645,48 @@ static int gpio_disable_set(void *data, u64 val)
 	return 0;
 }
 
+#ifdef ZTE_FEATURE_SLEEP_GPIO_CNF_APP
+/*GPIO_CFG in ARM9
+define GPIO_CFG(gpio, func, dir, pull, drvstr, rmt) \
+         (((gpio)&0xFF)<<8|((rmt)&0xF)<<4|((func)&0xF)|((dir)&0x1)<<16| \
+         ((pull)&0x3)<<17|((drvstr)&0x7)<<19)
+//		printk("%02d: info 0x%x\n",i,info);
+*/
+
+void gpio_printk_temp(u64 gpio_config,int debug_result)
+{
+	u16 gpio_number;
+	u16 func_val;
+	u16 dir_val;
+	u16 pull_val;
+	u16 drvstr_val;
+	u16 rmtval; 
+	gpio_number = (((gpio_config) >> 8) & 0xFF);
+	  rmtval =  (((gpio_config) >> 4) & 0xF);
+	  func_val =    ( (gpio_config) & 0xF);
+	  dir_val =     (((gpio_config) >> 16) & 0x1);
+	  pull_val =    (((gpio_config) >> 17) & 0x3);
+	  drvstr_val =  (((gpio_config) >> 19) & 0x7);
+
+	printk("GPIO %02d;func %02d;dir %02d;pull %02d;drvstr %02d;rmt %02d;\n",gpio_number,func_val,dir_val,pull_val,drvstr_val,rmtval);
+		printk(" debug_result %02d\n",debug_result);
+}
+
+static int gpio_sleep_enable_set(void *data, u64 val)
+{
+	msm_gpio_debug_result = gpio_sleep_tlmm_config(val, 1);
+	gpio_printk_temp(val,msm_gpio_debug_result);
+	
+	return 0;
+}
+static int gpio_sleep_disable_set(void *data, u64 val)
+{
+	msm_gpio_debug_result = gpio_sleep_tlmm_config(val, 0);
+	gpio_printk_temp(val,msm_gpio_debug_result);
+	return 0;
+}
+
+#endif
 static int gpio_debug_get(void *data, u64 *val)
 {
 	unsigned int result = msm_gpio_debug_result;
@@ -648,6 +702,12 @@ DEFINE_SIMPLE_ATTRIBUTE(gpio_enable_fops, gpio_debug_get,
 						gpio_enable_set, "%llu\n");
 DEFINE_SIMPLE_ATTRIBUTE(gpio_disable_fops, gpio_debug_get,
 						gpio_disable_set, "%llu\n");
+#ifdef  ZTE_FEATURE_SLEEP_GPIO_CNF_APP
+DEFINE_SIMPLE_ATTRIBUTE(gpio_sleep_enable_fops, gpio_debug_get,
+						gpio_sleep_enable_set, "%llu\n");
+DEFINE_SIMPLE_ATTRIBUTE(gpio_sleep_disable_fops, gpio_debug_get,
+						gpio_sleep_disable_set, "%llu\n");
+#endif
 
 static int __init gpio_debug_init(void)
 {
@@ -658,6 +718,10 @@ static int __init gpio_debug_init(void)
 
 	debugfs_create_file("enable", 0644, dent, 0, &gpio_enable_fops);
 	debugfs_create_file("disable", 0644, dent, 0, &gpio_disable_fops);
+#ifdef  ZTE_FEATURE_SLEEP_GPIO_CNF_APP
+	debugfs_create_file("enable_sleep", 0644, dent, 0, &gpio_sleep_enable_fops);
+	debugfs_create_file("disable_sleep", 0644, dent, 0, &gpio_sleep_disable_fops);
+#endif
 	return 0;
 }
 

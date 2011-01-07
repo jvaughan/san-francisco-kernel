@@ -41,8 +41,11 @@
 
 #include "queue.h"
 
-MODULE_ALIAS("mmc:block");
-
+#include <linux/proc_fs.h>
+static int mmc_block_debug = 0;
+static int mmc_block_nr = 0;
+static struct proc_dir_entry * d_entry;
+unsigned long max_jiffies = 0;
 /*
  * max 16 partitions per card
  */
@@ -240,6 +243,7 @@ static u32 get_card_status(struct mmc_card *card, struct request *req)
 		       req->rq_disk->disk_name, err);
 	return cmd.resp[0];
 }
+void power_off_on_host(struct mmc_host *host);
 
 static int
 mmc_blk_set_blksize(struct mmc_blk_data *md, struct mmc_card *card)
@@ -274,6 +278,7 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 	struct mmc_card *card = md->queue.card;
 	struct mmc_blk_request brq;
 	int ret = 1, disable_multi = 0;
+	int sd_in_programm_state = 0;
 
 #ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
 	if (mmc_bus_needs_resume(card->host)) {
@@ -377,6 +382,15 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 		 * programming mode even when things go wrong.
 		 */
 		if (brq.cmd.error || brq.data.error || brq.stop.error) {
+			int err;
+			int mmc_send_status(struct mmc_card *card, u32 *status);
+			err = mmc_send_status(mq->card, NULL);
+			if (err) {
+			      printk(KERN_ERR "rms:%s: (%d) the card is removed? %d %s\n",
+				       __func__, err, brq.data.blocks,
+				       rq_data_dir(req) == READ?"read":"write");
+				goto cmd_err;
+			}
 			if (brq.data.blocks > 1 && rq_data_dir(req) == READ) {
 				/* Redo read one sector at a time */
 				printk(KERN_WARNING "%s: retrying using single "
@@ -415,6 +429,7 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 		}
 
 		if (!mmc_host_is_spi(card->host) && rq_data_dir(req) != READ) {
+			unsigned long last_jiffies = jiffies;
 			do {
 				int err;
 
@@ -427,6 +442,15 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 					       req->rq_disk->disk_name, err);
 					goto cmd_err;
 				}
+				if(time_after(jiffies, last_jiffies + 10 * HZ)
+				   || mmc_block_debug) {
+				     printk(KERN_ERR "rms:%s: card in programm state: %ld jiffies\n",
+					       req->rq_disk->disk_name,
+					       jiffies - last_jiffies);
+					sd_in_programm_state = 1;
+					mmc_block_debug = 0;
+					goto cmd_err;
+				}
 				/*
 				 * Some cards mishandle the status bits,
 				 * so make sure to check both the busy
@@ -434,6 +458,13 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 				 */
 			} while (!(cmd.resp[0] & R1_READY_FOR_DATA) ||
 				(R1_CURRENT_STATE(cmd.resp[0]) == 7));
+			if (jiffies - last_jiffies > max_jiffies) {
+				max_jiffies = jiffies - last_jiffies;
+			}
+
+			if (mmc_block_nr < brq.data.blocks) {
+				mmc_block_nr = brq.data.blocks;
+			}
 
 #if 0
 			if (cmd.resp[0] & ~0x00000900)
@@ -501,7 +532,9 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 	while (ret)
 		ret = __blk_end_request(req, -EIO, blk_rq_cur_bytes(req));
 	spin_unlock_irq(&md->lock);
-
+	if (sd_in_programm_state) {
+		power_off_on_host(card->host);
+	}
 	return 0;
 }
 
@@ -638,6 +671,7 @@ static int mmc_blk_probe(struct mmc_card *card)
 
 	return err;
 }
+int remove_all_req(struct mmc_queue *mq);
 
 static void mmc_blk_remove(struct mmc_card *card)
 {
@@ -645,6 +679,10 @@ static void mmc_blk_remove(struct mmc_card *card)
 
 	if (md) {
 		/* Stop new requests from getting into the queue */
+		printk(KERN_ERR"rms:%s %d\n", __FUNCTION__, __LINE__);
+		queue_flag_set_unlocked(QUEUE_FLAG_DEAD,
+					md->queue.queue);
+		remove_all_req(&md->queue);
 		del_gendisk(md->disk);
 
 		/* Then flush out any already in there */
@@ -696,10 +734,64 @@ static struct mmc_driver mmc_driver = {
 	.resume		= mmc_blk_resume,
 };
 
+static int mmc_read_proc(
+        char *page, char **start, off_t off, int count, int *eof, void *data)
+{
+	int len = 0;
+	len = sprintf(page, "mmc-block %s\nmax_jiffies = %ld\nmmc_block_nr = %d\n",
+                      !!mmc_block_debug == 1?"on":"off", max_jiffies,
+		      mmc_block_nr);
+	return len;
+
+}
+
+static int mmc_write_proc(struct file *file, const char __user *buffer,
+			     unsigned long count, void *data)
+{
+	char tmp[16] = {0};
+	int len = 0;
+	len = count;
+	if (count > sizeof(tmp)) {
+		len = sizeof(tmp) - 1;
+	}
+	if(copy_from_user(tmp, buffer, len))
+                return -EFAULT;
+	if (strstr(tmp, "on")) {
+		mmc_block_debug = 1;
+	} else if (strstr(tmp, "off")) {
+		mmc_block_debug = 0;
+	}
+	return count;
+
+}
+
+
+static void
+init_mmc_proc(void)
+{
+	d_entry = create_proc_entry("mmc-block",
+				    0, NULL);
+        if (d_entry) {
+                d_entry->read_proc = mmc_read_proc;
+                d_entry->write_proc = mmc_write_proc;
+                d_entry->data = NULL;
+        }
+
+}
+
+static void
+deinit_mmc_proc(void)
+{
+	if (NULL != d_entry) {
+		remove_proc_entry("mmc-block", NULL);
+		d_entry = NULL;
+	}
+}
+
 static int __init mmc_blk_init(void)
 {
 	int res;
-
+	init_mmc_proc();
 	res = register_blkdev(MMC_BLOCK_MAJOR, "mmc");
 	if (res)
 		goto out;
@@ -717,6 +809,7 @@ static int __init mmc_blk_init(void)
 
 static void __exit mmc_blk_exit(void)
 {
+	deinit_mmc_proc();
 	mmc_unregister_driver(&mmc_driver);
 	unregister_blkdev(MMC_BLOCK_MAJOR, "mmc");
 }

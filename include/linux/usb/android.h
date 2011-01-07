@@ -50,7 +50,7 @@ struct usb_composition {
 	__u16   adb_product_id;
 	unsigned long adb_functions;
 };
-
+#if 0
 /* Platform data for "usb_mass_storage" driver. */
 struct usb_mass_storage_platform_data {
 	/* Contains values for the SC_INQUIRY SCSI command. */
@@ -61,4 +61,5 @@ struct usb_mass_storage_platform_data {
 	/* number of LUNS */
 	int nluns;
 };
+#endif
 #endif	/* __LINUX_USB_ANDROID_H */

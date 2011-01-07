@@ -43,6 +43,12 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* ========================================================================================
+when         who        what, where, why                             comment tag
+--------     ----       -----------------------------                ----------------------
+
+
+==========================================================================================*/
 //#define DEBUG
 //#define VERBOSE_DEBUG
 //#define DUMP_MSGS
@@ -68,6 +74,7 @@
 #include <linux/utsname.h>
 #include <linux/usb/ch9.h>
 #include <linux/usb/mass_storage_function.h>
+#include <linux/usb.h>
 #include <linux/usb_usual.h>
 #include <linux/platform_device.h>
 #include <linux/wakelock.h>
@@ -325,6 +332,8 @@ struct fsg_dev {
 
 	int			thread_wakeup_needed;
 	struct completion	thread_notifier;
+
+	struct completion	thread_notifier_exit;
 	struct task_struct	*thread_task;
 
 	int			cmnd_size;
@@ -2475,7 +2484,9 @@ static int fsg_main_thread(void *fsg_)
 		close_all_backing_files(fsg);
 
 	/* Let the unbind and cleanup routines know the thread has exited */
-	complete_and_exit(&fsg->thread_notifier, 0);
+
+	complete(&fsg->thread_notifier);
+	complete_and_exit(&fsg->thread_notifier_exit, 0);
 }
 
 
@@ -2705,6 +2716,10 @@ static void /* __init_or_exit */ fsg_unbind(void *_ctxt)
 		raise_exception(fsg, FSG_STATE_EXIT);
 		wait_for_completion(&fsg->thread_notifier);
 
+		/* The cleanup routine waits for this completion also */
+
+		//complete(&fsg->thread_notifier);
+		
 	}
 
 	/* Free the data buffers */
@@ -2766,8 +2781,10 @@ static void fsg_bind(void *_ctxt)
 		curlun->dev.release = lun_release;
 		curlun->dev.parent = &fsg->pdev->dev;
 		dev_set_drvdata(&curlun->dev, fsg);
-		snprintf(curlun->dev.bus_id, BUS_ID_SIZE,
+		/*snprintf(curlun->dev.bus_id, BUS_ID_SIZE,
 				"lun%d", i);
+*/
+dev_set_name(&curlun->dev,"lun%d",     i);
 
 		rc = device_register(&curlun->dev);
 		if (rc != 0) {
@@ -2814,6 +2831,8 @@ static void fsg_bind(void *_ctxt)
 	fsg->buffhds[NUM_BUFFERS - 1].next = &fsg->buffhds[0];
 
 	fsg->state = FSG_STATE_IDLE;
+
+	init_completion(&fsg->thread_notifier_exit);
 	fsg->thread_task = kthread_create(fsg_main_thread, fsg,
 			"USB mass_storage");
 	if (IS_ERR(fsg->thread_task)) {
@@ -2916,6 +2935,8 @@ static int __init fsg_alloc(void)
 	kref_init(&fsg->ref);
 	init_completion(&fsg->thread_notifier);
 
+	init_completion(&fsg->thread_notifier_exit);
+
 	the_fsg = fsg;
 	return 0;
 }
@@ -2938,6 +2959,8 @@ static int __exit fsg_remove(struct platform_device *pdev)
 	wake_lock_destroy(&fsg->wake_lock_idle);
 	switch_dev_unregister(&fsg->sdev);
 	test_and_clear_bit(REGISTERED, &fsg->atomic_bitflags);
+
+	wait_for_completion(&fsg->thread_notifier_exit);
 	close_all_backing_files(fsg);
 	kref_put(&fsg->ref, fsg_release);
 

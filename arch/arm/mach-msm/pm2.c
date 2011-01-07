@@ -66,7 +66,9 @@ enum {
 	MSM_PM_DEBUG_IDLE = 1U << 6,
 };
 
-static int msm_pm_debug_mask;
+/* caozy_debug_20091229 */
+//static int msm_pm_debug_mask;
+static int msm_pm_debug_mask = MSM_PM_DEBUG_SUSPEND | MSM_PM_DEBUG_POWER_COLLAPSE;
 module_param_named(
 	debug_mask, msm_pm_debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP
 );
@@ -550,7 +552,7 @@ static int msm_pm_poll_state(int nr_grps, struct msm_pm_polled_group *grps)
  *****************************************************************************/
 
 #define SCLK_HZ (32768)
-#define MSM_PM_SLEEP_TICK_LIMIT (0x6DDD000)
+#define MSM_PM_SLEEP_TICK_LIMIT (0x54600000)
 
 #ifdef CONFIG_MSM_SLEEP_TIME_OVERRIDE
 static int msm_pm_sleep_time_override;
@@ -587,10 +589,9 @@ void msm_pm_set_max_sleep_time(int64_t max_sleep_time_ns)
 		if (msm_pm_max_sleep_time == 0)
 			msm_pm_max_sleep_time = 1;
 	}
-
 	MSM_PM_DPRINTK(MSM_PM_DEBUG_SUSPEND, KERN_INFO,
-		"%s(): Requested %lld ns Giving %u sclk ticks\n", __func__,
-		max_sleep_time_ns, msm_pm_max_sleep_time);
+		"%s(): Requested %lld ns Giving %u sclk ticks (= %d s)\n", __func__,
+		max_sleep_time_ns, msm_pm_max_sleep_time,msm_pm_max_sleep_time>>15);
 	local_irq_restore(flags);
 }
 EXPORT_SYMBOL(msm_pm_set_max_sleep_time);
@@ -919,6 +920,12 @@ static struct msm_pm_smem_t *msm_pm_smem_data;
 static uint32_t *msm_pm_reset_vector;
 static atomic_t msm_pm_init_done = ATOMIC_INIT(0);
 
+#ifdef CONFIG_ZTE_SUSPEND_WAKEUP_MONITOR
+struct msm_pm_smem_t * get_msm_pm_smem_data(void)
+{
+	return msm_pm_smem_data;
+}
+#endif
 /*
  * Power collapse the Apps processor.  This function executes the handshake
  * protocol with Modem.
@@ -1686,7 +1693,9 @@ static void msm_pm_power_off(void)
 static void msm_pm_restart(char str, const char *cmd)
 {
 	msm_rpcrouter_close();
-	msm_proc_comm(PCOM_RESET_CHIP, &restart_reason, 0);
+	//ruanmeisi factory data reset too slowly
+	//msm_proc_comm(PCOM_RESET_CHIP, &restart_reason, 0);
+	msm_proc_comm(PCOM_RESET_CHIP_IMM, &restart_reason, 0);
 
 	for (;;)
 		;
@@ -1710,6 +1719,9 @@ static int msm_reboot_call
 			restart_reason = 0x77665501;
 		}
 	}
+
+       printk(KERN_INFO "[PM] reboot reason = 0x%x\n",restart_reason);
+	
 	return NOTIFY_DONE;
 }
 

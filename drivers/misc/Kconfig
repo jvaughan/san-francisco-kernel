@@ -17,6 +17,9 @@ config ANDROID_PMEM
 	bool "Android pmem allocator"
 	default y
 
+config FM_SI4708
+	bool "Android fm semiconductor si470x from silicon libraries"
+	default y
 config ANDROID_PMEM_DEBUG
 	bool "Android pmem debug"
 	depends on ANDROID_PMEM

@@ -61,6 +61,11 @@ int msm_fsusb_rpc_close(void);
 int msm_fsusb_remote_dev_disconnected(void);
 int msm_fsusb_set_remote_wakeup(void);
 void msm_fsusb_rpc_deinit(void);
+//ruanmeisi_20100715
+int
+msm_hsusb_get_set_usb_conf_nv_value(uint32_t nv_item,uint32_t value,uint32_t is_write);
+//end
+
 #else
 static inline int msm_hsusb_rpc_connect(void) { return 0; }
 static inline int msm_hsusb_phy_reset(void) { return 0; }

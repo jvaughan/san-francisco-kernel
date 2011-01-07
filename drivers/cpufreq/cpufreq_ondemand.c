@@ -645,6 +645,10 @@ static DECLARE_WORK(dbs_refresh_work, dbs_refresh_callback);
 static void dbs_input_event(struct input_handle *handle, unsigned int type,
 		unsigned int code, int value)
 {
+#ifdef CONFIG_SENSORS_AK8973
+	if (!strcmp(handle->dev->name, "compass"))
+		return;
+#endif
 	schedule_work(&dbs_refresh_work);
 }
 

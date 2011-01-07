@@ -32,6 +32,7 @@
 #include "rndis.h"
 
 
+
 /*
  * This function is an RNDIS Ethernet port -- a Microsoft protocol that's
  * been promoted instead of the standard CDC Ethernet.  The published RNDIS
@@ -244,6 +245,24 @@ static struct usb_descriptor_header *eth_fs_function[] = {
 	NULL,
 };
 
+
+static struct usb_descriptor_header *eth_fs_function_noassoc[] = {
+	/* control interface matches ACM, not Ethernet */
+	//(struct usb_descriptor_header *) &rndis_interface_assoc_desc,
+	(struct usb_descriptor_header *) &rndis_control_intf,
+	(struct usb_descriptor_header *) &header_desc,
+	(struct usb_descriptor_header *) &call_mgmt_descriptor,
+	(struct usb_descriptor_header *) &acm_descriptor,
+	(struct usb_descriptor_header *) &rndis_union_desc,
+	(struct usb_descriptor_header *) &fs_notify_desc,
+	/* data interface has no altsetting */
+	(struct usb_descriptor_header *) &rndis_data_intf,
+	(struct usb_descriptor_header *) &fs_out_desc,
+	(struct usb_descriptor_header *) &fs_in_desc,
+	NULL,
+};
+
+
 /* high speed support: */
 
 static struct usb_endpoint_descriptor hs_notify_desc = {
@@ -288,6 +307,44 @@ static struct usb_descriptor_header *eth_hs_function[] = {
 	(struct usb_descriptor_header *) &hs_out_desc,
 	NULL,
 };
+
+
+static struct usb_descriptor_header *eth_hs_function_noassoc[] = {
+	/* control interface matches ACM, not Ethernet */
+	//(struct usb_descriptor_header *) &rndis_interface_assoc_desc,
+	(struct usb_descriptor_header *) &rndis_control_intf,
+	(struct usb_descriptor_header *) &header_desc,
+	(struct usb_descriptor_header *) &call_mgmt_descriptor,
+	(struct usb_descriptor_header *) &acm_descriptor,
+	(struct usb_descriptor_header *) &rndis_union_desc,
+	(struct usb_descriptor_header *) &hs_notify_desc,
+	/* data interface has no altsetting */
+	(struct usb_descriptor_header *) &rndis_data_intf,
+	(struct usb_descriptor_header *) &hs_in_desc,
+	(struct usb_descriptor_header *) &hs_out_desc,
+	NULL,
+};
+
+int support_assoc_desc(void);
+struct usb_descriptor_header ** get_eth_hs_function(void)
+{
+	if (support_assoc_desc()) {
+		return eth_hs_function;
+	} else {
+		return eth_hs_function_noassoc;
+	}
+}
+
+struct usb_descriptor_header ** get_eth_fs_function(void)
+{
+	if (support_assoc_desc()) {
+		return eth_fs_function;
+	} else {
+		return eth_fs_function_noassoc;
+	}
+}
+
+
 
 /* string descriptors: */
 
@@ -661,15 +718,17 @@ rndis_bind(struct usb_configuration *c, struct usb_function *f)
 	rndis->notify_req->complete = rndis_response_complete;
 
 	/* copy descriptors, and track endpoint copies */
-	f->descriptors = usb_copy_descriptors(eth_fs_function);
+
+	
+	f->descriptors = usb_copy_descriptors(get_eth_fs_function());
 	if (!f->descriptors)
 		goto fail;
 
-	rndis->fs.in = usb_find_endpoint(eth_fs_function,
+	rndis->fs.in = usb_find_endpoint(get_eth_fs_function(),
 			f->descriptors, &fs_in_desc);
-	rndis->fs.out = usb_find_endpoint(eth_fs_function,
+	rndis->fs.out = usb_find_endpoint(get_eth_fs_function(),
 			f->descriptors, &fs_out_desc);
-	rndis->fs.notify = usb_find_endpoint(eth_fs_function,
+	rndis->fs.notify = usb_find_endpoint(get_eth_fs_function(),
 			f->descriptors, &fs_notify_desc);
 
 	/* support all relevant hardware speeds... we expect that when
@@ -685,18 +744,21 @@ rndis_bind(struct usb_configuration *c, struct usb_function *f)
 				fs_notify_desc.bEndpointAddress;
 
 		/* copy descriptors, and track endpoint copies */
-		f->hs_descriptors = usb_copy_descriptors(eth_hs_function);
+
+		//f->hs_descriptors = usb_copy_descriptors(eth_hs_function);
+		f->hs_descriptors = usb_copy_descriptors(get_eth_hs_function());
 
 		if (!f->hs_descriptors)
 			goto fail;
 
-		rndis->hs.in = usb_find_endpoint(eth_hs_function,
+		rndis->hs.in = usb_find_endpoint(get_eth_hs_function(),
 				f->hs_descriptors, &hs_in_desc);
-		rndis->hs.out = usb_find_endpoint(eth_hs_function,
+		rndis->hs.out = usb_find_endpoint(get_eth_hs_function(),
 				f->hs_descriptors, &hs_out_desc);
-		rndis->hs.notify = usb_find_endpoint(eth_hs_function,
+		rndis->hs.notify = usb_find_endpoint(get_eth_hs_function(),
 				f->hs_descriptors, &hs_notify_desc);
 	}
+
 
 	rndis->port.open = rndis_open;
 	rndis->port.close = rndis_close;
@@ -799,6 +861,18 @@ int rndis_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN])
 
 	if (!can_support_rndis(c) || !ethaddr)
 		return -EINVAL;
+
+#ifndef CONFIG_USB_ANDROID_RNDIS_WCEIS
+	if (support_assoc_desc()) {
+		rndis_control_intf.bInterfaceClass =	USB_CLASS_COMM;
+		rndis_control_intf.bInterfaceSubClass =   USB_CDC_SUBCLASS_ACM;
+		rndis_control_intf.bInterfaceProtocol =   USB_CDC_ACM_PROTO_VENDOR;
+	} else {
+		rndis_control_intf.bInterfaceClass =	USB_CLASS_WIRELESS_CONTROLLER;
+		rndis_control_intf.bInterfaceSubClass =   1;
+		rndis_control_intf.bInterfaceProtocol =   3;
+	}
+#endif
 
 	/* maybe allocate device-global string IDs */
 	if (rndis_string_defs[0].id == 0) {

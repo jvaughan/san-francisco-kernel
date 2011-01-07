@@ -29,12 +29,14 @@
 #include <mach/board.h>
 #include <mach/msm_rpcrouter.h>
 #include <mach/debug_mm.h>
+#include <linux/switch.h>
 
 struct snd_ctxt {
 	struct mutex lock;
 	int opened;
 	struct msm_rpc_endpoint *ept;
 	struct msm_snd_endpoints *snd_epts;
+	struct switch_dev snd_dev_info;
 };
 
 struct snd_sys_ctxt {
@@ -46,6 +48,12 @@ static struct snd_sys_ctxt the_snd_sys;
 
 static struct snd_ctxt the_snd;
 
+#define SND_DEV 0
+#define EAR_MUTE 1
+#define MIC_MUTE 2
+#define SND_DEV_INFO_NUM 3
+static int keep_snd_dev_info[SND_DEV_INFO_NUM] = {0, 0, 0};
+
 #define RPC_SND_PROG	0x30000002
 #define RPC_SND_CB_PROG	0x31000002
 
@@ -55,6 +63,11 @@ static struct snd_ctxt the_snd;
 #define SND_SET_VOLUME_PROC 3
 #define SND_AVC_CTL_PROC 29
 #define SND_AGC_CTL_PROC 30
+  #define SND_AUDIO_LOOPBACK_PROC 37
+  #define SND_HPH_AMP_CTL_PROC 38
+
+#define SND_DEVICE_FM_STEREO_HEADSET_ZTE	32
+#define SND_SET_FM_HEADSET_DEVICE_PROC    41
 
 struct rpc_snd_set_device_args {
 	uint32_t device;
@@ -86,6 +99,19 @@ struct rpc_snd_agc_ctl_args {
 	uint32_t client_data;
 };
 
+
+struct rpc_snd_lb_ctl_args {
+	uint32_t lb_ctl;
+	uint32_t cb_func;
+	uint32_t client_data;
+};
+
+struct rpc_snd_hph_amp_ctl_args {
+	uint32_t amp_ctl;
+	uint32_t cb_func;
+	uint32_t client_data;
+};
+
 struct snd_set_device_msg {
 	struct rpc_request_hdr hdr;
 	struct rpc_snd_set_device_args args;
@@ -104,6 +130,17 @@ struct snd_avc_ctl_msg {
 struct snd_agc_ctl_msg {
 	struct rpc_request_hdr hdr;
 	struct rpc_snd_agc_ctl_args args;
+};
+
+
+struct snd_set_lb_msg {
+	struct rpc_request_hdr hdr;
+	struct rpc_snd_lb_ctl_args args;
+};
+
+struct snd_hph_amp_msg {
+	struct rpc_request_hdr hdr;
+	struct rpc_snd_hph_amp_ctl_args args;
 };
 
 struct snd_endpoint *get_snd_endpoints(int *size);
@@ -149,6 +186,7 @@ static long snd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	struct snd_set_volume_msg vmsg;
 	struct snd_avc_ctl_msg avc_msg;
 	struct snd_agc_ctl_msg agc_msg;
+	struct snd_set_lb_msg lb_msg;
 
 	struct msm_snd_device_config dev;
 	struct msm_snd_volume_config vol;
@@ -156,6 +194,7 @@ static long snd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int rc = 0;
 
 	uint32_t avc, agc;
+	uint32_t set_lb;
 
 	mutex_lock(&snd->lock);
 	switch (cmd) {
@@ -180,10 +219,32 @@ static long snd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 		MM_INFO("snd_set_device %d %d %d\n", dev.device,
 				dev.ear_mute, dev.mic_mute);
-
+		
+		#if 0
 		rc = msm_rpc_call(snd->ept,
 			SND_SET_DEVICE_PROC,
 			&dmsg, sizeof(dmsg), 5 * HZ);
+		
+		#else
+		if(SND_DEVICE_FM_STEREO_HEADSET_ZTE == dev.device)
+		{
+			rc = msm_rpc_call(snd->ept,
+				SND_SET_FM_HEADSET_DEVICE_PROC,
+				&dmsg, sizeof(dmsg), 5 * HZ);
+		}
+		else	
+		{
+		rc = msm_rpc_call(snd->ept,
+			SND_SET_DEVICE_PROC,
+			&dmsg, sizeof(dmsg), 5 * HZ);
+        }
+		#endif
+              if (dev.device != 28)
+              {
+		    keep_snd_dev_info[SND_DEV] = dev.device;
+              }
+		keep_snd_dev_info[EAR_MUTE] = dev.ear_mute;
+		keep_snd_dev_info[MIC_MUTE] = dev.mic_mute;
 		break;
 
 	case SND_SET_VOLUME:
@@ -262,6 +323,28 @@ static long snd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	case SND_GET_ENDPOINT:
 		rc = get_endpoint(snd, arg);
+		break;
+
+
+	case SND_SET_AUDIO_LOOPBACK:
+		if (get_user(set_lb, (uint32_t __user *) arg)) {
+			rc = -EFAULT;
+			break;
+		} else if ((set_lb != 1) && (set_lb != 0)) {
+			rc = -EINVAL;
+			break;
+		}
+
+		lb_msg.args.lb_ctl = cpu_to_be32(set_lb);
+
+		lb_msg.args.cb_func = -1;
+		lb_msg.args.client_data = 0;
+
+		pr_info("snd_lb_ctl %d\n", set_lb);
+
+		rc = msm_rpc_call(snd->ept,
+			SND_AUDIO_LOOPBACK_PROC,
+			&lb_msg, sizeof(lb_msg), 5 * HZ);
 		break;
 
 	default:
@@ -579,6 +662,29 @@ static ssize_t snd_vol_store(struct device *dev,
 	return status ? : size;
 }
 
+int snd_hph_amp_ctl(uint32_t on)
+{
+	struct snd_ctxt *snd = &the_snd;
+	struct snd_hph_amp_msg hph_amp_msg;
+	int rc = 0;
+
+	pr_info("snd_hph_amp_ctl:%d\n", on);
+
+	mutex_lock(&snd->lock);
+    
+	hph_amp_msg.args.amp_ctl = cpu_to_be32(on);
+	hph_amp_msg.args.cb_func = -1;
+	hph_amp_msg.args.client_data = 0;
+
+	rc = msm_rpc_call(snd->ept,
+			SND_HPH_AMP_CTL_PROC,
+			&hph_amp_msg, sizeof(hph_amp_msg), 5 * HZ);
+
+	mutex_unlock(&snd->lock);
+    
+	return rc;
+}
+
 static DEVICE_ATTR(agc, S_IWUSR | S_IRUGO,
 		NULL, snd_agc_store);
 
@@ -590,6 +696,16 @@ static DEVICE_ATTR(device, S_IWUSR | S_IRUGO,
 
 static DEVICE_ATTR(volume, S_IWUSR | S_IRUGO,
 		NULL, snd_vol_store);
+
+static ssize_t print_snd_dev_name(struct switch_dev *sdev, char *buf)
+{
+	return sprintf(buf, "%s\n", "dev,ear_mute,mic_mute");
+}
+
+static ssize_t print_snd_dev_state(struct switch_dev *sdev, char *buf)
+{
+	return sprintf(buf, "%d,%d,%d\n", keep_snd_dev_info[SND_DEV], keep_snd_dev_info[EAR_MUTE], keep_snd_dev_info[MIC_MUTE]);
+}
 
 static int snd_probe(struct platform_device *pdev)
 {
@@ -639,6 +755,13 @@ static int snd_probe(struct platform_device *pdev)
 						&dev_attr_device);
 		misc_deregister(&snd_misc);
 	}
+
+	snd->snd_dev_info.name = "snd_debug";
+	snd->snd_dev_info.print_name = print_snd_dev_name;
+	snd->snd_dev_info.print_state = print_snd_dev_state;
+	rc = switch_dev_register(&snd->snd_dev_info);
+	if (rc < 0)
+		switch_dev_unregister(&snd->snd_dev_info);
 
 	return rc;
 }

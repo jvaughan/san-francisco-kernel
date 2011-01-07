@@ -402,9 +402,10 @@ static ssize_t adb_write(struct file *fp, const char __user *buf,
 	if (_lock(&dev->write_excl))
 		return -EBUSY;
 
-	if (!atomic_read(&dev->online))
+	if (!atomic_read(&dev->online)) {
+		_unlock(&dev->write_excl);
 		return -EIO;
-
+	}
 	while (count > 0) {
 		if (atomic_read(&dev->error)) {
 			DBG(cdev, "adb_write dev->error\n");

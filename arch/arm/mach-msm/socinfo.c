@@ -93,8 +93,6 @@ static enum msm_cpu cpu_of_id[] = {
 	[33] = MSM_CPU_7X01,
 	[34] = MSM_CPU_7X01,
 	[35] = MSM_CPU_7X01,
-
-	/* 7x25 IDs */
 	[20] = MSM_CPU_7X25,
 	[21] = MSM_CPU_7X25, /* 7225 */
 	[24] = MSM_CPU_7X25, /* 7525 */
@@ -130,14 +128,9 @@ static enum msm_cpu cpu_of_id[] = {
 	/* 7x30 IDs */
 	[59] = MSM_CPU_7X30,
 	[60] = MSM_CPU_7X30,
-
-	/* 8x55 IDs */
 	[74] = MSM_CPU_8X55,
 	[75] = MSM_CPU_8X55,
 
-	/* Uninitialized IDs are not known to run Linux.
-	   MSM_CPU_UNKNOWN is set to 0 to ensure these IDs are
-	   considered as unknown CPU. */
 };
 
 static enum msm_cpu cur_cpu;
@@ -189,7 +182,6 @@ uint32_t socinfo_get_platform_version(void)
 enum msm_cpu socinfo_get_msm_cpu(void)
 {
 #ifdef CONFIG_ARCH_MSM8X60
-	/* Hardcode CPU for 8x60, which doesn't support socinfo yet. */
 	return MSM_CPU_8X60;
 #else
 	return cur_cpu;
@@ -299,7 +291,30 @@ socinfo_show_platform_type(struct sys_device *dev,
 
 	return snprintf(buf, PAGE_SIZE, "%-.32s\n", hw_platform[hw_type]);
 }
+#ifdef CONFIG_ZTE_PLATFORM
+#ifdef CONFIG_ZTE_FTM_FLAG_SUPPORT
+static int g_zte_ftm_flag;
+void zte_ftm_set_value(int val)
+{
+	g_zte_ftm_flag = val;
+}
+int zte_get_ftm_flag(void)
+{
+   return g_zte_ftm_flag;
+}
+static ssize_t
+socinfo_show_zte_ftm(struct sys_device *dev,
+			 struct sysdev_attribute *attr,
+			 char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", g_zte_ftm_flag);
+}
 
+static struct sysdev_attribute socinfo_zte_ftm_files[] = {
+	_SYSDEV_ATTR(zte_ftm_flag, 0444, socinfo_show_zte_ftm, NULL),
+};
+#endif
+#endif
 static ssize_t
 socinfo_show_platform_version(struct sys_device *dev,
 			 struct sysdev_attribute *attr,
@@ -379,6 +394,12 @@ static void __init socinfo_init_sysdev(void)
 		       __func__, err);
 		return;
 	}
+#ifdef CONFIG_ZTE_PLATFORM
+#ifdef CONFIG_ZTE_FTM_FLAG_SUPPORT
+	socinfo_create_files(&soc_sys_device, socinfo_zte_ftm_files,
+				ARRAY_SIZE(socinfo_zte_ftm_files));
+#endif
+#endif
 	socinfo_create_files(&soc_sys_device, socinfo_v1_files,
 				ARRAY_SIZE(socinfo_v1_files));
 	if (socinfo->v1.format < 2)
